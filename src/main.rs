@@ -52,75 +52,9 @@ impl<'a> ArgGraph<'a> {
         let sig = node.sig().unwrap();
         self.extend_args(sig.args());
         match node {
-            // uiua::Node::Array {
-            //     len,
-            //     inner,
-            //     boxed,
-            //     allow_ext,
-            //     prim,
-            //     span,
-            // } => {
-            //     dbg!(len, inner, boxed, allow_ext, prim, span);
-            //     unimplemented!("Array");
-            // }
-            // uiua::Node::CallGlobal(a, b) => {
-            //     dbg!(a, b);
-            //     unimplemented!("CallGlobal");
-            // }
-            // uiua::Node::CallMacro { index, sig, span } => {
-            //     dbg!(index, sig, span);
-            //     unimplemented!("CallMacro");
-            // }
-            // uiua::Node::BindGlobal { index, span } => {
-            //     dbg!(index, span);
-            //     unimplemented!("BindGlobal");
-            // }
-            // uiua::Node::Label(a, b) => {
-            //     dbg!(a, b);
-            //     unimplemented!("Label");
-            // }
-            // uiua::Node::RemoveLabel(a, b) => {
-            //     dbg!(a, b);
-            //     unimplemented!("RemoveLabel");
-            // }
-            // uiua::Node::Format(a, b) => {
-            //     dbg!(a, b);
-            //     unimplemented!("Format");
-            // }
-            // uiua::Node::MatchFormatPattern(a, b) => {
-            //     dbg!(a, b);
-            //     unimplemented!("MatchFormatPattern");
-            // }
             uiua::Node::CustomInverse(custom_inverse, _span) => {
                 self.process_node(&custom_inverse.normal.as_ref().unwrap().node);
             }
-            // uiua::Node::Switch {
-            //     branches,
-            //     sig,
-            //     under_cond,
-            //     span,
-            // } => {
-            //     dbg!(branches, sig, under_cond, span);
-            //     unimplemented!("Switch");
-            // }
-            // uiua::Node::Unpack {
-            //     count,
-            //     unbox,
-            //     allow_ext,
-            //     prim,
-            //     span,
-            // } => {
-            //     dbg!(count, unbox, allow_ext, prim, span);
-            //     unimplemented!("Unpack");
-            // }
-            // uiua::Node::SetOutputComment { i, n } => {
-            //     dbg!(i, n);
-            //     unimplemented!("SetOutputComment");
-            // }
-            // uiua::Node::Dynamic(a) => {
-            //     dbg!(a);
-            //     unimplemented!("Dynamic");
-            // }
             uiua::Node::PushUnder(n, _span) => {
                 self.under_stack
                     .extend(drain_args(&mut self.stack, *n).rev());
@@ -132,14 +66,6 @@ impl<'a> ArgGraph<'a> {
                 self.stack
                     .extend(drain_args(&mut self.under_stack, *n).rev());
             }
-            // uiua::Node::NoInline(a) => {
-            //     dbg!(a);
-            //     unimplemented!("NoInline");
-            // }
-            // uiua::Node::TrackCaller(a) => {
-            //     dbg!(a);
-            //     unimplemented!("TrackCaller");
-            // }
             uiua::Node::Push(_value) => self.stack.push(self.graph.add_node(Node::Node(node))),
             uiua::Node::Prim(uiua::Primitive::Identity, _span) => {}
             uiua::Node::Prim(uiua::Primitive::Pop, _span) => {
@@ -151,40 +77,6 @@ impl<'a> ArgGraph<'a> {
             uiua::Node::Prim(uiua::Primitive::Flip, _span) => {
                 args_mut(&mut self.stack, 2).reverse();
             }
-            // uiua::Node::Prim(prim, _span) => {
-            //     let sig = prim.sig().unwrap();
-            //     // if sig.outputs() != 1 {
-            //     //     dbg!(node);
-            //     //     unimplemented!("Uhh Idk what to do with non 1 output functions atm");
-            //     // }
-            //     self.extend_args(sig.args());
-            //     let new = self.graph.add_node(Node::Node(node));
-            //     for (i, arg) in drain_args(&mut self.stack, sig.args()).rev().enumerate() {
-            //         self.graph.add_edge(new, arg, i);
-            //     }
-            //     if sig.outputs() == 1 {
-            //         self.stack.push(new);
-            //     } else {
-            //         for i in (0..sig.outputs()).rev() {
-            //             let out = self.graph.add_node(Node::Out);
-            //             self.graph.add_edge(out, new, i);
-            //             self.stack.push(out);
-            //         }
-            //     }
-            // }
-            // uiua::Node::ImplPrim(prim, _span) => {
-            //     let args = prim.args().unwrap();
-            //     if prim.outputs().unwrap() != 1 {
-            //         dbg!(node);
-            //         unimplemented!("Uhh Idk what to do with non 1 output functions atm");
-            //     }
-            //     self.extend_args(args);
-            //     let new = self.graph.add_node(Node::Node(node));
-            //     for (i, arg) in drain_args(&mut self.stack, args).rev().enumerate() {
-            //         self.graph.add_edge(new, arg, i);
-            //     }
-            //     self.stack.push(new);
-            // }
             uiua::Node::Mod(uiua::Primitive::On, funcs, _span) => {
                 assert_eq!(funcs.len(), 1);
                 let preserved = *self.stack.last().unwrap();
@@ -261,35 +153,16 @@ impl<'a> ArgGraph<'a> {
                     self.process_node(&func.node);
                 }
             }
-            // uiua::Node::Mod(prim, args, span) => {
-            //     dbg!(prim, args, span);
-            //     unimplemented!("Mod");
-            // }
-            // uiua::Node::ImplMod(prim, args, span) => {
-            //     dbg!(prim, args, span);
-            //     unimplemented!("ImplMod");
-            // }
-            // uiua::Node::Call(a, b) => {
-            //     dbg!(a, b);
-            //     unimplemented!("Call");
-            // }
             uiua::Node::Run(nodes) => {
                 for node in nodes {
                     self.process_node(node);
                 }
             }
             node => {
-                // let sig = node.sig().unwrap();
-                // if sig.outputs() != 1 {
-                //     dbg!(node);
-                //     unimplemented!("Uhh Idk what to do with non 1 output functions atm");
-                // }
-                // self.extend_args(sig.args());
                 let new = self.graph.add_node(Node::Node(node));
                 for (i, arg) in drain_args(&mut self.stack, sig.args()).rev().enumerate() {
                     self.graph.add_edge(new, arg, i);
                 }
-                // self.stack.push(new);
 
                 if sig.outputs() == 1 {
                     self.stack.push(new);
