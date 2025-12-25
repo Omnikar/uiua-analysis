@@ -1,0 +1,9 @@
+[package]
+name = "uiua-analysis"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+petgraph = "0.8.3"
+# uiua = "0.17.2"
+uiua = { git = "https://github.com/uiua-lang/uiua" }
