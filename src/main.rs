@@ -186,6 +186,7 @@ impl<'a> ArgGraph<'a> {
         }
     }
 
+    /// Remove all nodes that are not reachable from either the current stack values or any mutating purity nodes
     fn prune(&mut self, asm: &uiua::Assembly) {
         let mut roots: Vec<_> = self
             .graph
