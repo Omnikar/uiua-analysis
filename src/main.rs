@@ -27,6 +27,7 @@ fn main() {
         &[
             Info {
                 // value: Some(uiua::Value::from(6)),
+                typ: Some(0),
                 scalar: Some(true),
                 ..Default::default()
             },
@@ -45,7 +46,7 @@ fn main() {
             // },
             // Info {
             //     rank: Some(2),
-            //     shape_prefix: [4, 3].into(),
+            //     shape_prefix: [3, 4].into(),
             //     ..Default::default()
             // },
         ],
@@ -105,6 +106,19 @@ impl<'a> std::fmt::Debug for Call<'a> {
             if let Some(ref val) = info.value {
                 write!(f, " = {val}")?;
                 return Ok(());
+            }
+            if let Some(typ) = info.typ
+            // Probably temporary
+                && typ != 0
+            {
+                let typ_str = match typ {
+                    0 => "ℝ",
+                    1 => "@",
+                    2 => "□",
+                    3 => "ℂ",
+                    _ => "",
+                };
+                write!(f, " | {typ_str}")?;
             }
             if let Some(rank) = info.rank {
                 if info.shape_prefix.len() < rank {
@@ -412,6 +426,7 @@ impl<'a> ArgGraph<'a> {
             }
             CallType::Node(uiua::Node::Prim(uiua::Primitive::Range, _span)) => {
                 let dep_info = dep_infos.pop().unwrap();
+                new_info.typ = Some(0);
                 if let Some(ref v) = dep_info.value
                 // TODO: handle bytes
                     && let Some(v) = v.as_num_array()
@@ -437,14 +452,37 @@ impl<'a> ArgGraph<'a> {
                 if let Some(&len) = dep_info.shape_prefix.first() {
                     new_info.value = Some(len.into());
                 }
+                new_info.typ = Some(0);
             }
             CallType::Node(uiua::Node::Prim(uiua::Primitive::Transpose, _span)) => {
                 let dep_info = dep_infos.pop().unwrap();
+                new_info.typ = dep_info.typ;
                 new_info.rank = dep_info.rank;
                 if !dep_info.shape_prefix.is_empty() {
                     new_info.shape_prefix = dep_info.shape_prefix[1..].into();
                     new_info.shape_suffix = dep_info.shape_suffix.clone();
                     new_info.shape_suffix.push(dep_info.shape_prefix[0]);
+                }
+            }
+            CallType::Node(uiua::Node::ImplPrim(uiua::ImplPrimitive::TransposeN(n), _span)) => {
+                let n = *n;
+                let m = n.unsigned_abs() as usize;
+                let dep_info = dep_infos.pop().unwrap();
+                new_info.typ = dep_info.typ;
+                new_info.rank = dep_info.rank;
+                if n > 0 && dep_info.shape_prefix.len() >= m {
+                    new_info.shape_prefix = dep_info.shape_prefix[m..].into();
+                    new_info.shape_suffix = dep_info.shape_suffix.clone();
+                    new_info
+                        .shape_suffix
+                        .extend_from_slice(&dep_info.shape_prefix[..m]);
+                } else if n < 0 && dep_info.shape_suffix.len() >= m {
+                    let split = dep_info.shape_suffix.len() - m;
+                    new_info.shape_suffix = dep_info.shape_suffix[..split].into();
+                    new_info.shape_prefix = dep_info.shape_suffix[split..].into();
+                    new_info
+                        .shape_prefix
+                        .extend_from_slice(&dep_info.shape_prefix);
                 }
             }
             CallType::Node(uiua::Node::Prim(uiua::Primitive::Deshape, _span)) => {
@@ -740,6 +778,12 @@ impl<'a> ArgGraph<'a> {
 
             // If the shape prefix and suffix are large enough to be known to cover the full shape, expand both to be the full shape
             if new_info.shape_prefix.len() + new_info.shape_suffix.len() >= rank {
+                new_info.shape_prefix.truncate(rank);
+                if new_info.shape_suffix.len() > rank {
+                    new_info
+                        .shape_suffix
+                        .drain(0..new_info.shape_suffix.len() - rank);
+                }
                 // TODO: check that the overlap matches and emit an error otherwise
                 new_info.shape_prefix.extend_from_slice(
                     &new_info.shape_suffix
