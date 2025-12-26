@@ -350,7 +350,14 @@ impl<'a> ArgGraph<'a> {
             }
         }
         for idx in unreachable {
+            // When removing a node, `petgraph` updates the index of the last node to have it take its place
+            let last = self.graph.node_indices().next_back();
             self.graph.remove_node(idx);
+            for other_idx in self.stack.iter_mut() {
+                if Some(*other_idx) == last {
+                    *other_idx = idx;
+                }
+            }
         }
     }
 
