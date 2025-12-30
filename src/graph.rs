@@ -4,7 +4,8 @@ use smallvec::SmallVec;
 use std::collections::HashSet;
 use uiua::{Assembly, ImplPrimitive, Node, Primitive};
 
-type Stack = SmallVec<[NodeIndex; 16]>;
+pub type Stack = SmallVec<[NodeIndex; 16]>;
+pub type SmallStack = SmallVec<[NodeIndex; 4]>;
 
 /// A graph structure used to represent the tacit flow of data through a program
 #[derive(Default, Debug, Clone)]
@@ -16,7 +17,7 @@ pub struct DataGraph<'a> {
 }
 
 /// A single unit of a data graph
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum Data<'a> {
     /// A Uiua execution Node
     Node(&'a Node),
@@ -27,7 +28,7 @@ pub enum Data<'a> {
 }
 
 impl<'a> DataGraph<'a> {
-    pub fn from_node(asm: &Assembly, node: &'a Node) -> Result<Self> {
+    pub fn from_node(node: &'a Node, asm: &Assembly) -> Result<Self> {
         let mut data_graph = Self::default();
         data_graph.process_node(node)?;
         data_graph.prune(asm);
@@ -82,6 +83,7 @@ impl<'a> DataGraph<'a> {
             Ok(&funcs[0])
         }
 
+        // This is one big `match` block that comprises all the supported stack manipulation operations, ending with a catchall branch that is applied to anything that doesn't fall into the stack manipulation operations and other node types supported here
         use ImplPrimitive::*;
         use Primitive::*;
         match node {
@@ -167,7 +169,7 @@ impl<'a> DataGraph<'a> {
                 self.stack.extend(saved);
                 self.process_node(&func.node)?;
             }
-            uiua::Node::ImplMod(uiua::ImplPrimitive::BothImpl(sub), funcs, _span) => {
+            Node::ImplMod(ImplPrimitive::BothImpl(sub), funcs, _span) => {
                 use uiua::SubSide::*;
 
                 let func = one_func(Both, funcs)?;
@@ -205,20 +207,25 @@ impl<'a> DataGraph<'a> {
                     self.process_node(&func.node)?;
                 }
             }
-            uiua::Node::Run(nodes) => {
+            Node::Run(nodes) => {
                 for node in nodes {
                     self.process_node(node)?;
                 }
             }
+            // This is the branch that actually creates the main nodes, connecting each one to the appropriate number of inputs from the stack
             node => {
                 let new = self.graph.add_node(Data::Node(node));
                 for (i, arg) in drain_args(&mut self.stack, sig.args()).rev().enumerate() {
+                    // Each edge is given a weight equal to the index of the node it points at in the arguments of the node that depends on it.
+                    // So a `Sub` node will have two arrows pointing out of it, the 0 arrow corresponding to the left argument, and the 1 arrow to the right argument.
                     self.graph.add_edge(new, arg, i);
                 }
 
                 if sig.outputs() == 1 {
                     self.stack.push(new);
                 } else {
+                    // For multi-output functions, an `Out` node is added for each output of the function, and the weights of the edges going from the `Out` node to the node for the function are used to indicate which output of the function each node represents.
+                    // For instance, an `UnKeep` node will have two `Out` nodes pointing to it. The one with a 0 edge corresponds to the run lengths, and the one with a 1 edge corresponds to the adjacent-deduplication.
                     for i in (0..sig.outputs()).rev() {
                         let out = self.graph.add_node(Data::Out);
                         self.graph.add_edge(out, new, i);
@@ -232,7 +239,8 @@ impl<'a> DataGraph<'a> {
     }
 
     /// Current stack values and mutating purity nodes
-    pub fn roots(&self, asm: &uiua::Assembly) -> Vec<NodeIndex> {
+    /// Anything not reachable from a root is considered dead code
+    pub fn roots(&self, asm: &Assembly) -> Vec<NodeIndex> {
         let mut roots: Vec<_> = self
             .graph
             .node_indices()

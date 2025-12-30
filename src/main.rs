@@ -1,5 +1,4 @@
 mod analyze;
-mod axis;
 mod compile_experiment;
 mod graph;
 
@@ -9,9 +8,11 @@ use std::collections::HashSet;
 use std::io::Write;
 
 fn main() {
-    // let file = std::env::args().nth(1).unwrap();
-    // let text = std::fs::read_to_string(file).unwrap();
-    // let asm = uiua::Assembly::from_uasm(&text).unwrap();
+    let file = std::env::args().nth(1).unwrap();
+    let text = std::fs::read_to_string(file).unwrap();
+    let asm = uiua::Assembly::from_uasm(&text).unwrap();
+    let mut uiua = uiua::Uiua::with_native_sys();
+    uiua.asm = asm;
 
     // compile::test(&asm);
     // let node = &asm.root;
@@ -33,14 +34,34 @@ fn main() {
     // writeln!(f, r#"    edge [fontname="Uiua386"]"#).unwrap();
     // write!(f, "{s}").unwrap();
 
-    use axis::Axis;
-    let a = Axis::from(3);
-    let mut b = Axis::from(4);
-    *b.term_mut(&[1]) = 1;
-    let mut c = Axis::from(2);
-    *c.term_mut(&[1]) = -1;
-    dbg!(&a, &b, &c, &a + &b, &b + &c, &a * &b, &a * &c, &b * &c);
-    println!("{}", std::mem::size_of::<Axis>());
+    // let a = Axis::from(3);
+    // let mut b = Axis::from(4);
+    // *b.term_mut(&[1]) = 1;
+    // let mut c = Axis::from(2);
+    // *c.term_mut(&[1]) = -1;
+    // dbg!(&a, &b, &c, &a + &b, &b + &c, &a * &b, &a * &c, &b * &c);
+    // println!("{}", std::mem::size_of::<Axis>());
+
+    let data_graph = graph::DataGraph::from_node(&uiua.asm.root, &uiua.asm).unwrap();
+    // let shape = [2, 3].map(analyze::axis::Axis::from).into_iter().collect();
+    let mut nvars = 0;
+    let shape = smallvec::smallvec![
+        analyze::axis::Axis::newvar(&mut nvars),
+        analyze::axis::Axis::newvar(&mut nvars),
+        analyze::axis::Axis::newvar(&mut nvars),
+    ];
+    // let shape2 = [4, 5].map(analyze::axis::Axis::from).into_iter().collect();
+    let arg_infos = &[analyze::Info {
+        typ: 0,
+        // shape: analyze::ShapeInfo::Known([1, 2, 3].into()),
+        shape: analyze::ShapeInfo::Ranked(shape),
+        // shape: analyze::ShapeInfo::Unranked {
+        //     prefix: shape,
+        //     suffix: shape2,
+        // },
+    }];
+    let info_graph = analyze::analyze_graph(&data_graph, arg_infos, &uiua);
+    dbg!(info_graph);
 }
 
 fn test() {
@@ -604,6 +625,7 @@ impl<'a> ArgGraph<'a> {
                 }
             }
             CallType::Node(uiua::Node::ImplPrim(uiua::ImplPrimitive::TransposeN(n), _span)) => {
+                // This is completely wrong I think (it's the old definition of transpose n)
                 let n = *n;
                 let m = n.unsigned_abs() as usize;
                 let dep_info = dep_infos.pop().unwrap();
