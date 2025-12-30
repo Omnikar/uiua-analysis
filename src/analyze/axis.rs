@@ -43,7 +43,9 @@ impl Axis {
             && let Axis::Const(v) = self
         {
             let mut map = HashMap::new();
-            map.insert(SmallVec::new(), *v);
+            if *v != 0 {
+                map.insert(SmallVec::new(), *v);
+            }
             *self = Axis::Var(map);
         }
         match (self, exps) {
@@ -78,6 +80,80 @@ impl Axis {
             }
         }
     }
+
+    /// Heuristic for deciding which of two equal expressions to proceed with
+    pub fn complexity(&self) -> usize {
+        match self {
+            Axis::Const(_) => 0,
+            Axis::Var(map) => {
+                // TODO: Figure out a heuristic for non-constant terms
+                1
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for Axis {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        const SUBSCRIPT_DIGITS: [char; 10] = uiua::SUBSCRIPT_DIGITS;
+        const SUPERSCRIPT_DIGITS: [char; 10] = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
+        /// Turn a number into a subscript or superscript
+        fn sub_sup(mut val: usize, charset: [char; 10]) -> String {
+            let mut chars = Vec::new();
+            if val == 0 {
+                return charset[0].into();
+            }
+            while val > 0 {
+                chars.push(charset[val % 10]);
+                val /= 10;
+            }
+            chars.into_iter().rev().collect()
+        }
+
+        match self {
+            Axis::Const(val) => write!(f, "{val}"),
+            Axis::Var(map) => {
+                // Whether the first nonzero term has been written yet
+                // Used to omit a leading `+`
+                let mut begun = false;
+                // For each term in the polynomial
+                for (exps, coef) in map {
+                    if *coef == 0 {
+                        continue;
+                    }
+                    if *coef < 0 {
+                        write!(f, "-")?;
+                    }
+                    // Don't put a `+` before the first term
+                    else if begun {
+                        write!(f, "+")?;
+                    }
+                    begun = true;
+
+                    // Coefficient of the term
+                    let coef_abs = coef.abs();
+                    if coef_abs != 1 {
+                        write!(f, "{coef_abs}")?;
+                    }
+
+                    // Write each variable in the term as "x" followed by a subscript and a superscript
+                    for (exp_i, &exp) in exps.iter().enumerate() {
+                        if exp == 0 {
+                            continue;
+                        }
+                        let sub_s = sub_sup(exp_i, SUBSCRIPT_DIGITS);
+                        let sup_s = if exp == 1 {
+                            String::new()
+                        } else {
+                            sub_sup(exp, SUPERSCRIPT_DIGITS)
+                        };
+                        write!(f, "x{sub_s}{sup_s}")?;
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 macro_rules! impl_from_integer {
@@ -86,6 +162,11 @@ macro_rules! impl_from_integer {
             impl From<$t> for Axis {
                 fn from(value: $t) -> Axis {
                     Axis::Const(value as isize)
+                }
+            }
+            impl From<&$t> for Axis {
+                fn from(value: &$t) -> Axis {
+                    Axis::from(*value)
                 }
             }
         )+
@@ -317,5 +398,37 @@ impl Relation {
         self.expr
             .only_const()
             .map(|val| if self.ineq { val > 0 } else { val == 0 } ^ self.inv)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum Condition {
+    Or(SmallVec<[Relation; 4]>),
+}
+
+impl From<Relation> for Condition {
+    fn from(value: Relation) -> Self {
+        Self::Or(smallvec::smallvec![value])
+    }
+}
+
+impl Condition {
+    /// Returns `Some(false)` if the condition can be determined to be false by only comparing constants
+    /// Returns `Some(true)` if the condition can be determined to be true by only comparing constants
+    /// Returns `None` otherwise
+    fn trivial(&self) -> Option<bool> {
+        match self {
+            Self::Or(rels) => {
+                let mut out = Some(false);
+                for rel in rels {
+                    match rel.trivial() {
+                        Some(true) => return Some(true),
+                        None => out = None,
+                        _ => {}
+                    }
+                }
+                out
+            }
+        }
     }
 }

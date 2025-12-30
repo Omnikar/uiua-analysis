@@ -42,26 +42,63 @@ fn main() {
     // dbg!(&a, &b, &c, &a + &b, &b + &c, &a * &b, &a * &c, &b * &c);
     // println!("{}", std::mem::size_of::<Axis>());
 
+    use {
+        analyze::{axis::Axis, ShapeInfo},
+        smallvec::smallvec,
+    };
     let data_graph = graph::DataGraph::from_node(&uiua.asm.root, &uiua.asm).unwrap();
     // let shape = [2, 3].map(analyze::axis::Axis::from).into_iter().collect();
     let mut nvars = 0;
-    let shape = smallvec::smallvec![
-        analyze::axis::Axis::newvar(&mut nvars),
-        analyze::axis::Axis::newvar(&mut nvars),
-        analyze::axis::Axis::newvar(&mut nvars),
+    let shape = smallvec![
+        Axis::newvar(&mut nvars),
+        Axis::newvar(&mut nvars),
+        Axis::newvar(&mut nvars),
     ];
     // let shape2 = [4, 5].map(analyze::axis::Axis::from).into_iter().collect();
-    let arg_infos = &[analyze::Info {
-        typ: 0,
-        // shape: analyze::ShapeInfo::Known([1, 2, 3].into()),
-        shape: analyze::ShapeInfo::Ranked(shape),
-        // shape: analyze::ShapeInfo::Unranked {
-        //     prefix: shape,
-        //     suffix: shape2,
-        // },
-    }];
-    let info_graph = analyze::analyze_graph(&data_graph, arg_infos, &uiua);
-    dbg!(info_graph);
+    let arg_infos = &[
+        analyze::Info {
+            typ: 0,
+            shape: ShapeInfo::Known([1, 2, 3].into()),
+            // shape: ShapeInfo::Ranked(shape),
+            // shape: ShapeInfo::Unranked {
+            //     prefix: shape,
+            //     suffix: shape2,
+            // },
+        },
+        analyze::Info {
+            typ: 0,
+            shape: ShapeInfo::Ranked(shape),
+        },
+    ];
+    let info_graph = analyze::analyze_graph(&data_graph, arg_infos, &uiua).unwrap();
+    dbg!(&info_graph);
+    for req in &info_graph.reqs {
+        match req {
+            analyze::axis::Condition::Or(rels) => {
+                for rel in rels {
+                    println!(
+                        "{} {} 0",
+                        rel.expr,
+                        match (rel.ineq, rel.inv) {
+                            (false, false) => '=',
+                            (true, false) => '>',
+                            (false, true) => '≠',
+                            (true, true) => '≤',
+                        }
+                    );
+                }
+            }
+        }
+    }
+
+    let mut f = std::fs::File::create("graph.dot").unwrap();
+    let s = format!("{:?}", petgraph::dot::Dot::new(&info_graph.graph));
+    let s = s.strip_prefix("digraph {\n").unwrap();
+    writeln!(f, "digraph {{").unwrap();
+    writeln!(f, "    node [shape=box]").unwrap();
+    writeln!(f, r#"    node [fontname="Uiua386"]"#).unwrap();
+    writeln!(f, r#"    edge [fontname="Uiua386"]"#).unwrap();
+    write!(f, "{s}").unwrap();
 }
 
 fn test() {

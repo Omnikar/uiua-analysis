@@ -1,10 +1,10 @@
 //! Primitive-specific functions for propagating static analysis `Info`
 
 use anyhow::{bail, Context, Result};
-use smallvec::smallvec;
-use uiua::{Shape, SigNode, Value};
+use smallvec::{smallvec, SmallVec};
+use uiua::{SigNode, Value};
 
-use super::axis::{Axis, Relation};
+use super::axis::{Axis, Condition, Relation};
 use super::{Info, ShapeInfo, SymShape};
 // use crate::graph::{Data, DataGraph, SmallStack};
 
@@ -13,7 +13,7 @@ use ShapeInfo::*;
 pub struct AnalyzeCtx<'a, 'b, 'c> {
     pub dep_infos: Vec<Info>,
     pub nvars: &'a mut usize,
-    pub reqs: &'b mut Vec<Relation>,
+    pub reqs: &'b mut Vec<Condition>,
     pub uiua: &'c uiua::Uiua,
 }
 
@@ -27,166 +27,346 @@ fn two_args(dep_infos: Vec<Info>) -> Result<[Info; 2]> {
     n_args::<2>(dep_infos)
 }
 
-// pub fn pervasive(
-//     func: impl Fn(f64, f64) -> f64,
-//     dep_infos: Vec<Info>,
-//     _nvars: &mut usize,
-//     _reqs: &mut Vec<(Axis, Axis)>,
-//     _span: usize,
-// ) -> Result<Info> {
-//     let [mut lhs, mut rhs] = two_args(dep_infos)?;
+fn pervade_shapes(
+    shapes: impl IntoIterator<Item = SymShape>,
+    reqs: &mut Vec<Condition>,
+) -> Result<SymShape> {
+    let mut shapes: SmallVec<[SymShape; 4]> = shapes.into_iter().collect();
+    for shape in &mut shapes {
+        shape.reverse();
+    }
+    let mut new_shape = SymShape::new();
+    let rank: usize = shapes
+        .iter()
+        .map(SmallVec::len)
+        .max()
+        .context("Cannot pervade zero shapes")?;
+    for _ in 0..rank {
+        let new = shapes
+            .iter_mut()
+            .filter_map(|sh| sh.pop())
+            .try_fold(1.into(), |lhs, rhs| match_axes(lhs, rhs, reqs))?;
+        new_shape.push(new);
+    }
+    Ok(new_shape)
+}
 
-//     for info in [&mut lhs, &mut rhs] {
-//         if let Known(val) = &info.shape {
-//             info.shape = Ranked(val.shape.iter().copied().map(Axis::from).collect());
-//         }
-//     }
-
-//     let shape = match (lhs.shape, rhs.shape) {
-//         (Ranked(lshape), Ranked(rshape)) => {
-//             todo!()
-//         }
-//         // (Ranked(lshape), Unranked { prefix, suffix }) => todo!(),
-//         // (Unranked { prefix, suffix }, Ranked(small_vec)) => todo!(),
-//         // (Unranked { prefix, suffix }, Unranked { prefix, suffix }) => todo!(),
-//         _ => todo!(),
-//         // _ => unreachable!(),
-//     };
-
-//     todo!()
-// }
-
-// pub fn pervasive_dyadic(
-//     func: impl Fn(Value, Value) -> Value,
-//     ctx: AnalyzeCtx,
-//     _span: usize,
-// ) -> Result<Info> {
-//     let [mut lhs, mut rhs] = two_args(ctx.dep_infos)?;
-
-//     todo!()
-// }
+/// Attempt to match two axis lengths together
+fn match_axes(lhs: Axis, rhs: Axis, reqs: &mut Vec<Condition>) -> Result<Axis> {
+    // TODO: Currently only supports ahead-of-time fixing
+    //       Not sure how to properly address the general case
+    if lhs.only_const() == Some(1) {
+        Ok(rhs)
+    } else if rhs.only_const() == Some(1) {
+        Ok(lhs)
+    } else {
+        let req = Relation::eq(&lhs, &rhs);
+        if let Some(valid) = req.trivial() {
+            if !valid {
+                bail!("Cannot match axis lengths {} and {}", lhs, rhs);
+            }
+        } else {
+            reqs.push(req.into());
+        }
+        Ok(if lhs.complexity() < rhs.complexity() {
+            lhs
+        } else {
+            rhs
+        })
+    }
+}
 
 // -- Monadic Pervasive Functions --
 // TODO: Turn these into macros?
 
-pub fn not(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn not(ctx: AnalyzeCtx) -> Result<Info> {
     let mut dep_info = one_arg(ctx.dep_infos)?;
     if dep_info.typ == 1 {
         bail!("Cannot not character");
     }
-    if let Known(val) = &mut dep_info.shape {
-        // TODO: `Value` function once public
+    if let Known(val) = dep_info.shape {
+        dep_info.shape = Known(val.not(ctx.uiua)?);
     }
     Ok(dep_info)
 }
 
-pub fn sign(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn sign(ctx: AnalyzeCtx) -> Result<Info> {
     let mut dep_info = one_arg(ctx.dep_infos)?;
     if dep_info.typ == 1 {
         dep_info.typ = 0;
     }
-    if let Known(val) = &mut dep_info.shape {
-        // TODO: `Value` function once public
+    if let Known(val) = dep_info.shape {
+        dep_info.shape = Known(val.sign(ctx.uiua)?);
     }
     Ok(dep_info)
 }
 
-pub fn neg(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn neg(ctx: AnalyzeCtx) -> Result<Info> {
     let mut dep_info = one_arg(ctx.dep_infos)?;
-    if let Known(val) = &mut dep_info.shape {
-        // TODO: `Value` function once public
+    if let Known(val) = dep_info.shape {
+        dep_info.shape = Known(val.neg(ctx.uiua)?);
     }
     Ok(dep_info)
 }
 
-pub fn reciprocal(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn reciprocal(ctx: AnalyzeCtx) -> Result<Info> {
     let mut dep_info = one_arg(ctx.dep_infos)?;
     if dep_info.typ == 1 {
         bail!("Cannot get the reciprocal of character");
     }
-    if let Known(val) = &mut dep_info.shape {
-        // TODO: `Value` function once public
+    if let Known(val) = dep_info.shape {
+        dep_info.shape = Known(val.recip(ctx.uiua)?);
     }
     Ok(dep_info)
 }
 
-pub fn abs(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn abs(ctx: AnalyzeCtx) -> Result<Info> {
     let mut dep_info = one_arg(ctx.dep_infos)?;
-    if let Known(val) = &mut dep_info.shape {
-        // TODO: `Value` function once public
+    if let Known(val) = dep_info.shape {
+        dep_info.shape = Known(val.abs(ctx.uiua)?);
     }
     Ok(dep_info)
 }
 
-pub fn sqrt(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn sqrt(ctx: AnalyzeCtx) -> Result<Info> {
     let mut dep_info = one_arg(ctx.dep_infos)?;
     if dep_info.typ == 1 {
         bail!("Cannot take the square root of character");
     }
-    if let Known(val) = &mut dep_info.shape {
-        // TODO: `Value` function once public
+    if let Known(val) = dep_info.shape {
+        dep_info.shape = Known(val.sqrt(ctx.uiua)?);
     }
     Ok(dep_info)
 }
 
-pub fn exp(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn exp(ctx: AnalyzeCtx) -> Result<Info> {
     let mut dep_info = one_arg(ctx.dep_infos)?;
     if dep_info.typ == 1 {
         bail!("Cannot take the exponential of character");
     }
-    if let Known(val) = &mut dep_info.shape {
-        // TODO: `Value` function once public
+    if let Known(val) = dep_info.shape {
+        dep_info.shape = Known(val.exp(ctx.uiua)?);
     }
     Ok(dep_info)
 }
 
-pub fn sin(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn sin(ctx: AnalyzeCtx) -> Result<Info> {
     let mut dep_info = one_arg(ctx.dep_infos)?;
     if dep_info.typ == 1 {
         bail!("Cannot get the sine of character");
     }
-    if let Known(val) = &mut dep_info.shape {
-        // TODO: `Value` function once public
+    if let Known(val) = dep_info.shape {
+        dep_info.shape = Known(val.sin(ctx.uiua)?);
     }
     Ok(dep_info)
 }
 
-pub fn floor(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn floor(ctx: AnalyzeCtx) -> Result<Info> {
     let mut dep_info = one_arg(ctx.dep_infos)?;
     if dep_info.typ == 1 {
         bail!("Cannot get the floor of character");
     }
-    if let Known(val) = &mut dep_info.shape {
-        // TODO: `Value` function once public
+    if let Known(val) = dep_info.shape {
+        dep_info.shape = Known(val.floor(ctx.uiua)?);
     }
     Ok(dep_info)
 }
 
-pub fn ceil(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn ceil(ctx: AnalyzeCtx) -> Result<Info> {
     let mut dep_info = one_arg(ctx.dep_infos)?;
     if dep_info.typ == 1 {
         bail!("Cannot get the ceiling of character");
     }
-    if let Known(val) = &mut dep_info.shape {
-        // TODO: `Value` function once public
+    if let Known(val) = dep_info.shape {
+        dep_info.shape = Known(val.ceil(ctx.uiua)?);
     }
     Ok(dep_info)
 }
 
-pub fn round(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn round(ctx: AnalyzeCtx) -> Result<Info> {
     let mut dep_info = one_arg(ctx.dep_infos)?;
     if dep_info.typ == 1 {
         bail!("Cannot get the rounded value of character");
     }
-    if let Known(val) = &mut dep_info.shape {
-        // TODO: `Value` function once public
+    if let Known(val) = dep_info.shape {
+        dep_info.shape = Known(val.round(ctx.uiua)?);
     }
     Ok(dep_info)
 }
 
+// -- Dyadic Pervasive Functions --
+
+fn demote_known(lhs: &mut ShapeInfo, rhs: &mut ShapeInfo) {
+    if let Known(lval) = lhs
+        && !matches!(rhs, Known(_))
+    {
+        let shape = lval.shape.iter().map(Axis::from).collect();
+        *lhs = Ranked(shape);
+    } else if let Known(rval) = &rhs
+        && !matches!(lhs, Known(_))
+    {
+        let shape = rval.shape.iter().map(Axis::from).collect();
+        *rhs = Ranked(shape);
+    }
+}
+
+fn dyadic_pervasive(
+    mut lhs: ShapeInfo,
+    mut rhs: ShapeInfo,
+    func: fn(Value, Value, &uiua::Uiua) -> uiua::UiuaResult<Value>,
+    reqs: &mut Vec<Condition>,
+    uiua: &uiua::Uiua,
+) -> Result<ShapeInfo> {
+    demote_known(&mut lhs, &mut rhs);
+    let shape = match (lhs, rhs) {
+        (Known(lval), Known(rval)) => {
+            // TODO: Don't precompute if there are any fixed axes
+            Known(func(lval, rval, uiua)?)
+        }
+        (Ranked(lshape), Ranked(rshape)) => Ranked(pervade_shapes([lshape, rshape], reqs)?),
+        (Ranked(shape), Unranked { prefix, mut suffix })
+        | (Unranked { prefix, mut suffix }, Ranked(shape)) => {
+            if shape.len() > prefix.len() {
+                suffix.clear();
+            }
+            let prefix = pervade_shapes([shape, prefix], reqs)?;
+            Unranked { prefix, suffix }
+        }
+        (
+            Unranked {
+                prefix: lprefix,
+                suffix: lsuffix,
+            },
+            Unranked {
+                prefix: rprefix,
+                suffix: rsuffix,
+            },
+        ) => {
+            todo!()
+        }
+        _ => unreachable!(),
+    };
+    Ok(shape)
+}
+
+// Dyadic pervasive comparison functions
+fn cmp(
+    func: fn(Value, Value, &uiua::Uiua) -> uiua::UiuaResult<Value>,
+    ineq: bool,
+    ctx: AnalyzeCtx,
+) -> Result<Info> {
+    let [lhs, rhs] = two_args(ctx.dep_infos)?;
+    let typ = match (lhs.typ, rhs.typ) {
+        (2, 2) => 0,
+        (0, 3) | (3, 0) | (3, 3) if ineq => 3,
+        (2, _) | (_, 2) => 2,
+        _ => 0,
+    };
+
+    let shape = dyadic_pervasive(lhs.shape, rhs.shape, func, ctx.reqs, ctx.uiua)?;
+
+    Ok(Info { typ, shape })
+}
+
+pub fn eq(ctx: AnalyzeCtx) -> Result<Info> {
+    cmp(Value::is_eq, false, ctx)
+}
+
+pub fn ne(ctx: AnalyzeCtx) -> Result<Info> {
+    cmp(Value::is_ne, false, ctx)
+}
+
+pub fn lt(ctx: AnalyzeCtx) -> Result<Info> {
+    cmp(Value::other_is_lt, true, ctx)
+}
+
+pub fn le(ctx: AnalyzeCtx) -> Result<Info> {
+    cmp(Value::other_is_le, true, ctx)
+}
+
+pub fn gt(ctx: AnalyzeCtx) -> Result<Info> {
+    cmp(Value::other_is_gt, true, ctx)
+}
+
+pub fn ge(ctx: AnalyzeCtx) -> Result<Info> {
+    cmp(Value::other_is_ge, true, ctx)
+}
+
+pub fn add(ctx: AnalyzeCtx) -> Result<Info> {
+    let [lhs, rhs] = two_args(ctx.dep_infos)?;
+    let typ = match (lhs.typ, rhs.typ) {
+        (0, 0) => 0,
+        (0, 1) | (1, 0) => 1,
+        (2, _) | (_, 2) => 2,
+        (0, 3) | (3, 0) | (3, 3) => 3,
+        (1, 1) => bail!("Cannot add character and character"),
+        (1, 3) => bail!("Cannot add character and complex"),
+        (3, 1) => bail!("Cannot add complex and character"),
+        (_, 4..) | (4.., _) => unreachable!(),
+    };
+
+    let shape = dyadic_pervasive(lhs.shape, rhs.shape, Value::add, ctx.reqs, ctx.uiua)?;
+
+    Ok(Info { typ, shape })
+}
+
+pub fn sub(ctx: AnalyzeCtx) -> Result<Info> {
+    let [lhs, rhs] = two_args(ctx.dep_infos)?;
+    let typ = match (lhs.typ, rhs.typ) {
+        (0, 0) | (1, 1) => 0,
+        (0, 1) => 1,
+        (2, _) | (_, 2) => 2,
+        (0, 3) | (3, 0) | (3, 3) => 3,
+        (1, 0) => bail!("Cannot subtract character from number"),
+        (1, 3) => bail!("Cannot subtract character from complex"),
+        (3, 1) => bail!("Cannot subtract complex from character"),
+        (_, 4..) | (4.., _) => unreachable!(),
+    };
+
+    let shape = dyadic_pervasive(lhs.shape, rhs.shape, Value::sub, ctx.reqs, ctx.uiua)?;
+
+    Ok(Info { typ, shape })
+}
+
+pub fn mul(ctx: AnalyzeCtx) -> Result<Info> {
+    let [lhs, rhs] = two_args(ctx.dep_infos)?;
+    let typ = match (lhs.typ, rhs.typ) {
+        (0, 0) => 0,
+        (0, 1) | (1, 0) => 1,
+        (2, _) | (_, 2) => 2,
+        (0, 3) | (3, 0) | (3, 3) => 3,
+        (1, 1) => bail!("Cannot multiply character and character"),
+        (1, 3) => bail!("Cannot multiply character and complex"),
+        (3, 1) => bail!("Cannot multiply complex and character"),
+        (_, 4..) | (4.., _) => unreachable!(),
+    };
+
+    let shape = dyadic_pervasive(lhs.shape, rhs.shape, Value::mul, ctx.reqs, ctx.uiua)?;
+
+    Ok(Info { typ, shape })
+}
+
+pub fn div(ctx: AnalyzeCtx) -> Result<Info> {
+    let [lhs, rhs] = two_args(ctx.dep_infos)?;
+    let typ = match (lhs.typ, rhs.typ) {
+        (0, 0) => 0,
+        (0, 1) | (1, 0) => 1,
+        (2, _) | (_, 2) => 2,
+        (0, 3) | (3, 0) | (3, 3) => 3,
+        (1, 1) => bail!("Cannot divide character and character"),
+        (1, 3) => bail!("Cannot divide character and complex"),
+        (3, 1) => bail!("Cannot divide complex and character"),
+        (_, 4..) | (4.., _) => unreachable!(),
+    };
+
+    let shape = dyadic_pervasive(lhs.shape, rhs.shape, Value::div, ctx.reqs, ctx.uiua)?;
+
+    Ok(Info { typ, shape })
+}
+
 // -- Monadic Array Functions --
 
-pub fn len(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn len(ctx: AnalyzeCtx) -> Result<Info> {
     let dep_info = one_arg(ctx.dep_infos)?;
     let shape = match dep_info.shape {
         Known(value) => Known(value.shape.first().copied().unwrap_or(1).into()),
@@ -204,7 +384,7 @@ pub fn len(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
     Ok(Info { typ: 0, shape })
 }
 
-pub fn shape(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn shape(ctx: AnalyzeCtx) -> Result<Info> {
     let dep_info = one_arg(ctx.dep_infos)?;
     let shape = match dep_info.shape {
         Known(value) => Known(value.shape.iter().copied().collect()),
@@ -225,11 +405,12 @@ pub fn shape(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
     Ok(Info { typ: 0, shape })
 }
 
-pub fn range(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn range(ctx: AnalyzeCtx) -> Result<Info> {
     let dep_info = one_arg(ctx.dep_infos)?;
     if dep_info.typ != 0 {
         bail!("Range max should be a single integer or a list of integers");
     }
+    // TODO: Add an upper bound to the size of range which will be computed ahead of time?
     let shape = match dep_info.shape {
         Known(value) => Known(value.range(ctx.uiua)?),
         Ranked(mut shape) => {
@@ -271,7 +452,7 @@ pub fn range(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
                         bail!("Range max should be a single integer or a list of integers");
                     }
                 } else {
-                    ctx.reqs.push(req);
+                    ctx.reqs.push(req.into());
                 }
                 len1
             } else {
@@ -287,7 +468,7 @@ pub fn range(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
     Ok(Info { typ: 0, shape })
 }
 
-pub fn first(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn first(ctx: AnalyzeCtx) -> Result<Info> {
     let dep_info = one_arg(ctx.dep_infos)?;
     let shape = match dep_info.shape {
         Known(val) => Known(val.first(ctx.uiua)?),
@@ -304,7 +485,7 @@ pub fn first(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
                         bail!("Cannot take first of an empty array");
                     }
                 } else {
-                    ctx.reqs.push(req);
+                    ctx.reqs.push(req.into());
                 }
                 Ranked(shape)
             }
@@ -318,7 +499,7 @@ pub fn first(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
     })
 }
 
-pub fn last(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn last(ctx: AnalyzeCtx) -> Result<Info> {
     let dep_info = one_arg(ctx.dep_infos)?;
     let shape = match dep_info.shape {
         Known(val) => Known(val.last(ctx.uiua)?),
@@ -335,7 +516,7 @@ pub fn last(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
                         bail!("Cannot take last of an empty array");
                     }
                 } else {
-                    ctx.reqs.push(req);
+                    ctx.reqs.push(req.into());
                 }
                 Ranked(shape)
             }
@@ -349,7 +530,7 @@ pub fn last(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
     })
 }
 
-pub fn reverse(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn reverse(ctx: AnalyzeCtx) -> Result<Info> {
     let mut dep_info = one_arg(ctx.dep_infos)?;
     if let Known(value) = &mut dep_info.shape {
         value.reverse();
@@ -357,7 +538,7 @@ pub fn reverse(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
     Ok(dep_info)
 }
 
-pub fn deshape(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn deshape(ctx: AnalyzeCtx) -> Result<Info> {
     let dep_info = one_arg(ctx.dep_infos)?;
     let shape = match dep_info.shape {
         Known(mut value) => {
@@ -376,7 +557,7 @@ pub fn deshape(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
     })
 }
 
-pub fn deshape_sub(sub: i32, ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn deshape_sub(sub: i32, ctx: AnalyzeCtx) -> Result<Info> {
     let dep_info = one_arg(ctx.dep_infos)?;
     let sub_pos = sub.unsigned_abs() as usize;
     let shape = match dep_info.shape {
@@ -429,7 +610,7 @@ pub fn deshape_sub(sub: i32, ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
     })
 }
 
-pub fn fix(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn fix(ctx: AnalyzeCtx) -> Result<Info> {
     let dep_info = one_arg(ctx.dep_infos)?;
     let shape = match dep_info.shape {
         Known(mut value) => {
@@ -451,7 +632,7 @@ pub fn fix(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
     })
 }
 
-pub fn bits(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn bits(ctx: AnalyzeCtx) -> Result<Info> {
     let dep_info = one_arg(ctx.dep_infos)?;
     if dep_info.typ != 0 {
         bail!("Argument to bits must be an array of natural numbers");
@@ -470,7 +651,7 @@ pub fn bits(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
     Ok(Info { typ: 0, shape })
 }
 
-pub fn transpose(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn transpose(ctx: AnalyzeCtx) -> Result<Info> {
     let dep_info = one_arg(ctx.dep_infos)?;
     let shape = match dep_info.shape {
         Known(mut value) => {
@@ -499,11 +680,11 @@ pub fn transpose(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
     })
 }
 
-pub fn transpose_n(n: i32, ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn transpose_n(n: i32, ctx: AnalyzeCtx) -> Result<Info> {
     todo!()
 }
 
-pub fn sort(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn sort(ctx: AnalyzeCtx) -> Result<Info> {
     let mut dep_info = one_arg(ctx.dep_infos)?;
     if let Known(value) = &mut dep_info.shape {
         value.sort_up();
@@ -511,7 +692,7 @@ pub fn sort(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
     Ok(dep_info)
 }
 
-pub fn sort_down(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn sort_down(ctx: AnalyzeCtx) -> Result<Info> {
     let mut dep_info = one_arg(ctx.dep_infos)?;
     if let Known(value) = &mut dep_info.shape {
         value.sort_down();
@@ -519,7 +700,7 @@ pub fn sort_down(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
     Ok(dep_info)
 }
 
-pub fn rise(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn rise(ctx: AnalyzeCtx) -> Result<Info> {
     let mut dep_info = one_arg(ctx.dep_infos)?;
     if let Known(value) = &mut dep_info.shape {
         *value = value.rise().into();
@@ -527,7 +708,7 @@ pub fn rise(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
     Ok(dep_info)
 }
 
-pub fn fall(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn fall(ctx: AnalyzeCtx) -> Result<Info> {
     let mut dep_info = one_arg(ctx.dep_infos)?;
     if let Known(value) = &mut dep_info.shape {
         *value = value.fall().into();
@@ -535,7 +716,7 @@ pub fn fall(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
     Ok(dep_info)
 }
 
-pub fn r#where(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn r#where(ctx: AnalyzeCtx) -> Result<Info> {
     let dep_info = one_arg(ctx.dep_infos)?;
     if dep_info.typ != 0 {
         bail!("Argument to where must be an array of naturals")
@@ -554,7 +735,7 @@ pub fn r#where(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
     Ok(Info { typ: 0, shape })
 }
 
-pub fn deduplicate(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn deduplicate(ctx: AnalyzeCtx) -> Result<Info> {
     let mut dep_info = one_arg(ctx.dep_infos)?;
     match &mut dep_info.shape {
         Known(value) => value.deduplicate(ctx.uiua)?,
@@ -567,7 +748,7 @@ pub fn deduplicate(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
     Ok(dep_info)
 }
 
-pub fn classify(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn classify(ctx: AnalyzeCtx) -> Result<Info> {
     let dep_info = one_arg(ctx.dep_infos)?;
     let shape = match dep_info.shape {
         Known(value) => Known(value.classify()),
@@ -593,18 +774,18 @@ pub fn classify(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
     Ok(Info { typ: 0, shape })
 }
 
-pub fn occurrences(mut ctx: AnalyzeCtx, span: usize) -> Result<Info> {
+pub fn occurrences(mut ctx: AnalyzeCtx) -> Result<Info> {
     let dep_info = one_arg(ctx.dep_infos)?;
     if let Known(value) = dep_info.shape {
         let shape = Known(value.occurrences().into());
         Ok(Info { typ: 0, shape })
     } else {
         ctx.dep_infos = vec![dep_info];
-        classify(ctx, span)
+        classify(ctx)
     }
 }
 
-pub fn r#box(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn r#box(ctx: AnalyzeCtx) -> Result<Info> {
     let mut dep_info = one_arg(ctx.dep_infos)?;
     Ok(if let Known(value) = &mut dep_info.shape {
         value.box_it();
@@ -619,69 +800,71 @@ pub fn r#box(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
 
 // -- Dyadic Array Functions --
 
-pub fn reshape(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn reshape(ctx: AnalyzeCtx) -> Result<Info> {
     todo!()
 }
 
-pub fn select(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn select(ctx: AnalyzeCtx) -> Result<Info> {
     todo!()
 }
 
-pub fn keep(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn keep(ctx: AnalyzeCtx) -> Result<Info> {
     todo!()
 }
 
-pub fn multi_keep(n: usize, ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn multi_keep(n: usize, ctx: AnalyzeCtx) -> Result<Info> {
     todo!()
 }
 
-pub fn un_keep(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn un_keep(ctx: AnalyzeCtx) -> Result<Info> {
     todo!()
 }
 
-pub fn take(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn take(ctx: AnalyzeCtx) -> Result<Info> {
     todo!()
 }
 
-pub fn drop(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn drop(ctx: AnalyzeCtx) -> Result<Info> {
     todo!()
 }
 
-pub fn couple(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn couple(ctx: AnalyzeCtx) -> Result<Info> {
     todo!()
 }
 
-pub fn un_couple(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn un_couple(ctx: AnalyzeCtx) -> Result<Info> {
     todo!()
 }
 
-pub fn member_of(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn member_of(ctx: AnalyzeCtx) -> Result<Info> {
     todo!()
 }
 
 // -- Misc Functions --
 
-pub fn rand(_ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn rand(_ctx: AnalyzeCtx) -> Result<Info> {
     Ok(Info {
         typ: 0,
         shape: Ranked(smallvec![1.into()]),
     })
 }
 
-pub fn r#gen(ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn r#gen(ctx: AnalyzeCtx) -> Result<Info> {
     todo!()
 }
 
 // -- Iterating Modifiers --
 
-pub fn rows(funcs: &[SigNode], ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn rows(funcs: &[SigNode], ctx: AnalyzeCtx) -> Result<Info> {
     todo!()
 }
 
-pub fn table(funcs: &[SigNode], ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+pub fn table(funcs: &[SigNode], ctx: AnalyzeCtx) -> Result<Info> {
     todo!()
 }
 
-pub fn reduce(funcs: &[SigNode], ctx: AnalyzeCtx, _span: usize) -> Result<Info> {
+// -- Aggregating Modifiers --
+
+pub fn reduce(funcs: &[SigNode], ctx: AnalyzeCtx) -> Result<Info> {
     todo!()
 }

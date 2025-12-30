@@ -6,10 +6,10 @@ use itertools::{Either, Itertools};
 use petgraph::graph::NodeIndex;
 use petgraph::stable_graph::StableGraph;
 use smallvec::SmallVec;
-use uiua::{Assembly, Node};
+use uiua::{Node, Uiua, Value};
 
 use crate::graph::{Data, DataGraph, SmallStack};
-use axis::{Axis, Relation};
+use axis::{Axis, Condition};
 
 /// Symbolic shape
 pub type SymShape = SmallVec<[Axis; 4]>;
@@ -18,7 +18,7 @@ pub type SymShape = SmallVec<[Axis; 4]>;
 #[derive(Clone, Debug)]
 pub enum ShapeInfo {
     /// The exact value is known ahead of time
-    Known(uiua::Value),
+    Known(Value),
     /// The rank is known ahead of time
     /// Keeps track of info about axis lengths
     Ranked(SymShape),
@@ -39,7 +39,7 @@ pub struct Info {
 pub struct InfoGraph<'a> {
     pub graph: StableGraph<(Data<'a>, Either<Info, Vec<Info>>), usize>,
     /// List of axis relations that must be satisfied for the function to be valid
-    pub reqs: Vec<Relation>,
+    pub reqs: Vec<Condition>,
 }
 
 impl ShapeInfo {
@@ -55,7 +55,7 @@ pub fn analyze_graph<'a>(
     data_graph: &DataGraph<'a>,
     arg_infos: &[Info],
     // asm: &Assembly,
-    uiua: &uiua::Uiua,
+    uiua: &Uiua,
 ) -> Result<InfoGraph<'a>> {
     let roots = data_graph.roots(&uiua.asm);
 
@@ -92,11 +92,11 @@ type WorkingInfoGraph<'a> = StableGraph<(Data<'a>, Option<Either<Info, Vec<Info>
 fn analyze_node<'a>(
     info_graph: &mut WorkingInfoGraph<'a>,
     nvars: &mut usize,
-    reqs: &mut Vec<Relation>,
+    reqs: &mut Vec<Condition>,
     idx: NodeIndex,
     arg_infos: &[Info],
     // asm: &Assembly,
-    uiua: &uiua::Uiua,
+    uiua: &Uiua,
 ) -> Result<()> {
     // Short circuit if this node has been analyzed already
     if info_graph
@@ -148,8 +148,7 @@ fn analyze_node<'a>(
         reqs,
         uiua,
     };
-    use uiua::ImplPrimitive::*;
-    use uiua::Primitive::*;
+    use uiua::{ImplPrimitive::*, Primitive::*};
     let info = match data {
         Data::Arg(i) => arg_infos.get(i).context("Insufficient arg info")?.clone(),
         Data::Out => bail!("`Out` node not handled"),
@@ -159,40 +158,52 @@ fn analyze_node<'a>(
         },
 
         // -- Monadic Pervasive Functions --
-        Data::Node(Node::Prim(Not, span)) => impls::not(ctx, *span)?,
-        Data::Node(Node::Prim(Sign, span)) => impls::sign(ctx, *span)?,
-        Data::Node(Node::Prim(Neg, span)) => impls::neg(ctx, *span)?,
-        Data::Node(Node::Prim(Reciprocal, span)) => impls::reciprocal(ctx, *span)?,
-        Data::Node(Node::Prim(Abs, span)) => impls::abs(ctx, *span)?,
-        Data::Node(Node::Prim(Sqrt, span)) => impls::sqrt(ctx, *span)?,
-        Data::Node(Node::Prim(Exp, span)) => impls::exp(ctx, *span)?,
-        Data::Node(Node::Prim(Sin, span)) => impls::sin(ctx, *span)?,
-        Data::Node(Node::Prim(Floor, span)) => impls::floor(ctx, *span)?,
-        Data::Node(Node::Prim(Ceil, span)) => impls::ceil(ctx, *span)?,
-        Data::Node(Node::Prim(Round, span)) => impls::round(ctx, *span)?,
+        Data::Node(Node::Prim(Not, _span)) => impls::not(ctx)?,
+        Data::Node(Node::Prim(Sign, _span)) => impls::sign(ctx)?,
+        Data::Node(Node::Prim(Neg, _span)) => impls::neg(ctx)?,
+        Data::Node(Node::Prim(Reciprocal, _span)) => impls::reciprocal(ctx)?,
+        Data::Node(Node::Prim(Abs, _span)) => impls::abs(ctx)?,
+        Data::Node(Node::Prim(Sqrt, _span)) => impls::sqrt(ctx)?,
+        Data::Node(Node::Prim(Exp, _span)) => impls::exp(ctx)?,
+        Data::Node(Node::Prim(Sin, _span)) => impls::sin(ctx)?,
+        Data::Node(Node::Prim(Floor, _span)) => impls::floor(ctx)?,
+        Data::Node(Node::Prim(Ceil, _span)) => impls::ceil(ctx)?,
+        Data::Node(Node::Prim(Round, _span)) => impls::round(ctx)?,
+
+        // -- Dyadic Pervasive Functions --
+        Data::Node(Node::Prim(Eq, _span)) => impls::eq(ctx)?,
+        Data::Node(Node::Prim(Ne, _span)) => impls::ne(ctx)?,
+        Data::Node(Node::Prim(Lt, _span)) => impls::lt(ctx)?,
+        Data::Node(Node::Prim(Le, _span)) => impls::le(ctx)?,
+        Data::Node(Node::Prim(Gt, _span)) => impls::gt(ctx)?,
+        Data::Node(Node::Prim(Ge, _span)) => impls::ge(ctx)?,
+        Data::Node(Node::Prim(Add, _span)) => impls::add(ctx)?,
+        Data::Node(Node::Prim(Sub, _span)) => impls::sub(ctx)?,
+        Data::Node(Node::Prim(Mul, _span)) => impls::mul(ctx)?,
+        Data::Node(Node::Prim(Div, _span)) => impls::div(ctx)?,
 
         // -- Monadic Array Functions --
-        Data::Node(Node::Prim(Len, span)) => impls::len(ctx, *span)?,
-        Data::Node(Node::Prim(Shape, span)) => impls::shape(ctx, *span)?,
-        Data::Node(Node::Prim(Range, span)) => impls::range(ctx, *span)?,
-        Data::Node(Node::Prim(First, span)) => impls::first(ctx, *span)?,
-        Data::Node(Node::Prim(Last, span)) => impls::last(ctx, *span)?,
-        Data::Node(Node::Prim(Reverse, span)) => impls::reverse(ctx, *span)?,
-        Data::Node(Node::Prim(Deshape, span)) => impls::deshape(ctx, *span)?,
-        Data::Node(Node::ImplPrim(DeshapeSub(sub), span)) => impls::deshape_sub(*sub, ctx, *span)?,
-        Data::Node(Node::Prim(Fix, span)) => impls::fix(ctx, *span)?,
-        Data::Node(Node::Prim(Bits, span)) => impls::bits(ctx, *span)?,
-        Data::Node(Node::Prim(Transpose, span)) => impls::transpose(ctx, *span)?,
-        Data::Node(Node::ImplPrim(TransposeN(n), span)) => impls::transpose_n(*n, ctx, *span)?,
-        Data::Node(Node::Prim(Sort, span)) => impls::sort(ctx, *span)?,
-        Data::Node(Node::ImplPrim(SortDown, span)) => impls::sort_down(ctx, *span)?,
-        Data::Node(Node::Prim(Rise, span)) => impls::rise(ctx, *span)?,
-        Data::Node(Node::Prim(Fall, span)) => impls::fall(ctx, *span)?,
-        Data::Node(Node::Prim(Where, span)) => impls::r#where(ctx, *span)?,
-        Data::Node(Node::Prim(Deduplicate, span)) => impls::deduplicate(ctx, *span)?,
-        Data::Node(Node::Prim(Classify, span)) => impls::classify(ctx, *span)?,
-        Data::Node(Node::Prim(Occurrences, span)) => impls::occurrences(ctx, *span)?,
-        Data::Node(Node::Prim(Box, span)) => impls::r#box(ctx, *span)?,
+        Data::Node(Node::Prim(Len, _span)) => impls::len(ctx)?,
+        Data::Node(Node::Prim(Shape, _span)) => impls::shape(ctx)?,
+        Data::Node(Node::Prim(Range, _span)) => impls::range(ctx)?,
+        Data::Node(Node::Prim(First, _span)) => impls::first(ctx)?,
+        Data::Node(Node::Prim(Last, _span)) => impls::last(ctx)?,
+        Data::Node(Node::Prim(Reverse, _span)) => impls::reverse(ctx)?,
+        Data::Node(Node::Prim(Deshape, _span)) => impls::deshape(ctx)?,
+        Data::Node(Node::ImplPrim(DeshapeSub(sub), _span)) => impls::deshape_sub(*sub, ctx)?,
+        Data::Node(Node::Prim(Fix, _span)) => impls::fix(ctx)?,
+        Data::Node(Node::Prim(Bits, _span)) => impls::bits(ctx)?,
+        Data::Node(Node::Prim(Transpose, _span)) => impls::transpose(ctx)?,
+        Data::Node(Node::ImplPrim(TransposeN(n), _span)) => impls::transpose_n(*n, ctx)?,
+        Data::Node(Node::Prim(Sort, _span)) => impls::sort(ctx)?,
+        Data::Node(Node::ImplPrim(SortDown, _span)) => impls::sort_down(ctx)?,
+        Data::Node(Node::Prim(Rise, _span)) => impls::rise(ctx)?,
+        Data::Node(Node::Prim(Fall, _span)) => impls::fall(ctx)?,
+        Data::Node(Node::Prim(Where, _span)) => impls::r#where(ctx)?,
+        Data::Node(Node::Prim(Deduplicate, _span)) => impls::deduplicate(ctx)?,
+        Data::Node(Node::Prim(Classify, _span)) => impls::classify(ctx)?,
+        Data::Node(Node::Prim(Occurrences, _span)) => impls::occurrences(ctx)?,
+        Data::Node(Node::Prim(Box, _span)) => impls::r#box(ctx)?,
         _ => todo!(),
     };
 
@@ -201,11 +212,11 @@ fn analyze_node<'a>(
     Ok(())
 }
 
-fn typ(val: &uiua::Value) -> u8 {
+fn typ(val: &Value) -> u8 {
     match val {
-        uiua::Value::Byte(_) | uiua::Value::Num(_) => 0,
-        uiua::Value::Char(_) => 1,
-        uiua::Value::Box(_) => 2,
-        uiua::Value::Complex(_) => 3,
+        Value::Byte(_) | Value::Num(_) => 0,
+        Value::Char(_) => 1,
+        Value::Box(_) => 2,
+        Value::Complex(_) => 3,
     }
 }
