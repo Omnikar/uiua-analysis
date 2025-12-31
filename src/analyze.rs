@@ -241,9 +241,13 @@ fn analyze_node<'a>(
         // -- Misc Functions --
         Data::Node(Node::Prim(Rand, _span)) => Left(impls::rand(ctx)?),
 
-        // -- Iterating Modifiers --
+        // -- _________ Modifiers --
         Data::Node(Node::Mod(Rows, funcs, _span)) => impls::rows(funcs, ctx)?,
         Data::Node(Node::Mod(Table, funcs, _span)) => impls::table(funcs, ctx)?,
+
+        // -- Iterating Modifiers --
+        Data::Node(Node::Mod(Reduce, funcs, _span)) => Left(impls::reduce(funcs, ctx)?),
+
         _ => todo!(),
     };
 
@@ -258,5 +262,15 @@ fn typ(val: &Value) -> u8 {
         Value::Char(_) => 1,
         Value::Box(_) => 2,
         Value::Complex(_) => 3,
+    }
+}
+
+fn typ_name(id: u8) -> &'static str {
+    match id {
+        0 => "number",
+        1 => "character",
+        2 => "box",
+        3 => "complex",
+        n @ 4.. => panic!("Nonexistent type id: {n}"),
     }
 }

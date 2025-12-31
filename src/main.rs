@@ -51,8 +51,8 @@ fn main() {
     let mut nvars = 0;
     let shape = smallvec![
         Axis::newvar(&mut nvars),
-        Axis::newvar(&mut nvars),
-        Axis::newvar(&mut nvars),
+        // Axis::newvar(&mut nvars),
+        // Axis::newvar(&mut nvars),
     ];
     let shape2 = smallvec![
         Axis::newvar(&mut nvars),

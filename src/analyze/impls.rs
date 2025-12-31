@@ -6,7 +6,7 @@ use smallvec::{smallvec, SmallVec};
 use uiua::{SigNode, Value};
 
 use super::axis::{Axis, Condition, Relation};
-use super::{analyze_subgraph, Info, ShapeInfo, SymShape};
+use super::{analyze_subgraph, typ_name, Info, ShapeInfo, SymShape};
 use crate::graph::DataGraph;
 
 use ShapeInfo::*;
@@ -300,9 +300,10 @@ pub fn add(ctx: AnalyzeCtx) -> Result<Info> {
         (0, 1) | (1, 0) => 1,
         (2, _) | (_, 2) => 2,
         (0, 3) | (3, 0) | (3, 3) => 3,
-        (1, 1) => bail!("Cannot add character and character"),
-        (1, 3) => bail!("Cannot add character and complex"),
-        (3, 1) => bail!("Cannot add complex and character"),
+        (1, 1) | (1, 3) | (3, 1) => {
+            bail!("Cannot add {} and {}", typ_name(lhs.typ), typ_name(rhs.typ))
+        }
+
         (_, 4..) | (4.., _) => unreachable!(),
     };
 
@@ -318,9 +319,11 @@ pub fn sub(ctx: AnalyzeCtx) -> Result<Info> {
         (0, 1) => 1,
         (2, _) | (_, 2) => 2,
         (0, 3) | (3, 0) | (3, 3) => 3,
-        (1, 0) => bail!("Cannot subtract character from number"),
-        (1, 3) => bail!("Cannot subtract character from complex"),
-        (3, 1) => bail!("Cannot subtract complex from character"),
+        (1, 0) | (1, 3) | (3, 1) => bail!(
+            "Cannot subtract {} from {}",
+            typ_name(lhs.typ),
+            typ_name(rhs.typ),
+        ),
         (_, 4..) | (4.., _) => unreachable!(),
     };
 
@@ -336,9 +339,11 @@ pub fn mul(ctx: AnalyzeCtx) -> Result<Info> {
         (0, 1) | (1, 0) => 1,
         (2, _) | (_, 2) => 2,
         (0, 3) | (3, 0) | (3, 3) => 3,
-        (1, 1) => bail!("Cannot multiply character and character"),
-        (1, 3) => bail!("Cannot multiply character and complex"),
-        (3, 1) => bail!("Cannot multiply complex and character"),
+        (1, 1) | (1, 3) | (3, 1) => bail!(
+            "Cannot multiply {} and {}",
+            typ_name(lhs.typ),
+            typ_name(rhs.typ),
+        ),
         (_, 4..) | (4.., _) => unreachable!(),
     };
 
@@ -354,9 +359,11 @@ pub fn div(ctx: AnalyzeCtx) -> Result<Info> {
         (0, 1) | (1, 0) => 1,
         (2, _) | (_, 2) => 2,
         (0, 3) | (3, 0) | (3, 3) => 3,
-        (1, 1) => bail!("Cannot divide character and character"),
-        (1, 3) => bail!("Cannot divide character and complex"),
-        (3, 1) => bail!("Cannot divide complex and character"),
+        (1, 1) | (1, 3) | (3, 1) => bail!(
+            "Cannot divide {} and {}",
+            typ_name(lhs.typ),
+            typ_name(rhs.typ),
+        ),
         (_, 4..) | (4.., _) => unreachable!(),
     };
 
@@ -409,7 +416,10 @@ pub fn shape(ctx: AnalyzeCtx) -> Result<Info> {
 pub fn range(ctx: AnalyzeCtx) -> Result<Info> {
     let dep_info = one_arg(ctx.dep_infos)?;
     if dep_info.typ != 0 {
-        bail!("Range max should be a single integer or a list of integers");
+        bail!(
+            "Range max should be a single integer or a list of integers, but it is {}",
+            typ_name(dep_info.typ),
+        );
     }
     // TODO: Add an upper bound to the size of range which will be computed ahead of time?
     let shape = match dep_info.shape {
@@ -433,7 +443,7 @@ pub fn range(ctx: AnalyzeCtx) -> Result<Info> {
                     }
                 }
             } else {
-                bail!("Range max should be a single integer or a list of integers");
+                bail!("Range max should be a single integer or a list of integers, but its rank is {}", shape.len());
             }
         }
         Unranked {
@@ -636,7 +646,10 @@ pub fn fix(ctx: AnalyzeCtx) -> Result<Info> {
 pub fn bits(ctx: AnalyzeCtx) -> Result<Info> {
     let dep_info = one_arg(ctx.dep_infos)?;
     if dep_info.typ != 0 {
-        bail!("Argument to bits must be an array of natural numbers");
+        bail!(
+            "Argument to bits must be an array of natural numbers, but it is {}",
+            typ_name(dep_info.typ)
+        );
     }
     let shape = match dep_info.shape {
         Known(value) => Known(value.bits(None, ctx.uiua)?),
@@ -720,7 +733,10 @@ pub fn fall(ctx: AnalyzeCtx) -> Result<Info> {
 pub fn r#where(ctx: AnalyzeCtx) -> Result<Info> {
     let dep_info = one_arg(ctx.dep_infos)?;
     if dep_info.typ != 0 {
-        bail!("Argument to where must be an array of naturals")
+        bail!(
+            "Argument to where must be an array of naturals, but it is {}",
+            typ_name(dep_info.typ),
+        )
     }
     let shape = match dep_info.shape {
         Known(value) => Known(value.wher(ctx.uiua)?),
@@ -863,6 +879,7 @@ pub fn rows(funcs: &[SigNode], ctx: AnalyzeCtx) -> Result<Either<Info, Vec<Info>
     // Errors if any axis matches fail
     // FIXME: This probably shouldn't short circuit at the first `None`, since it's still possible to find length mismatches even if some of the lengths are unknown
     // FIXME: If the suffix is nonempty, that is enough to know the value is not a scalar, and introduce a new variable for the axis that must match instead of giving up
+    // FIXME: The current method does not account for the case where all inputs are scalars
     let len = ctx
         .dep_infos
         .iter()
@@ -873,7 +890,7 @@ pub fn rows(funcs: &[SigNode], ctx: AnalyzeCtx) -> Result<Either<Info, Vec<Info>
         .transpose()?
         .unwrap_or_else(|| Axis::newvar(ctx.nvars));
 
-    let mut row_dep_infos = Vec::new();
+    let mut row_infos = Vec::new();
     for info in &ctx.dep_infos {
         let row_shape = match info.shape.clone() {
             Known(val) => {
@@ -902,15 +919,14 @@ pub fn rows(funcs: &[SigNode], ctx: AnalyzeCtx) -> Result<Either<Info, Vec<Info>
                 Unranked { prefix, suffix }
             }
         };
-        row_dep_infos.push(Info {
+        row_infos.push(Info {
             typ: info.typ,
             shape: row_shape,
         });
     }
 
     let data_graph = DataGraph::from_node(func, &ctx.uiua.asm)?;
-    let mut info_graph =
-        analyze_subgraph(&data_graph, &row_dep_infos, ctx.nvars, ctx.reqs, ctx.uiua)?;
+    let mut info_graph = analyze_subgraph(&data_graph, &row_infos, ctx.nvars, ctx.reqs, ctx.uiua)?;
 
     let process_info = |info: Info| {
         let shape = match info.shape {
@@ -967,7 +983,7 @@ pub fn table(funcs: &[SigNode], ctx: AnalyzeCtx) -> Result<Either<Info, Vec<Info
     // True if `leading_axes` is known to not contain all of the leading axes produced by `table`. If true, the final output will be `Unranked`.
     let la_incomplete = ax_iter.next().is_some();
 
-    let mut row_dep_infos = Vec::new();
+    let mut row_infos = Vec::new();
 
     for info in &ctx.dep_infos {
         // NOTE: This is copy-pasted from the analogous section of `rows` above. Should it be factored out?
@@ -998,15 +1014,14 @@ pub fn table(funcs: &[SigNode], ctx: AnalyzeCtx) -> Result<Either<Info, Vec<Info
                 Unranked { prefix, suffix }
             }
         };
-        row_dep_infos.push(Info {
+        row_infos.push(Info {
             typ: info.typ,
             shape: row_shape,
         });
     }
 
     let data_graph = DataGraph::from_node(func, &ctx.uiua.asm)?;
-    let mut info_graph =
-        analyze_subgraph(&data_graph, &row_dep_infos, ctx.nvars, ctx.reqs, ctx.uiua)?;
+    let mut info_graph = analyze_subgraph(&data_graph, &row_infos, ctx.nvars, ctx.reqs, ctx.uiua)?;
 
     let process_info = |info: Info| {
         let shape = match info.shape {
@@ -1067,6 +1082,115 @@ pub fn table(funcs: &[SigNode], ctx: AnalyzeCtx) -> Result<Either<Info, Vec<Info
 
 // -- Aggregating Modifiers --
 
+// FIXME: This is not right for anything except pervasives currently
 pub fn reduce(funcs: &[SigNode], ctx: AnalyzeCtx) -> Result<Info> {
-    todo!()
+    let func = &funcs[0].node;
+
+    if ctx.dep_infos.len() != 1 {
+        // TODO: Higher adicity reduce
+        bail!("Higher-adicity reduce is not currently supported");
+    }
+
+    let dep_info = one_arg(ctx.dep_infos)?;
+
+    // NOTE: This is copy-pasted from the analogous section of `rows` above. Should it be factored out?
+    let row_shape = match dep_info.shape {
+        Known(val) => {
+            if val.shape.first().copied().unwrap_or(1) == 1 {
+                Known(val.first(ctx.uiua)?)
+            } else {
+                Ranked(val.shape[1..].iter().map(Into::into).collect())
+            }
+        }
+        Ranked(mut shape) => {
+            if !shape.is_empty() {
+                shape.remove(0);
+            }
+            Ranked(shape)
+        }
+        Unranked {
+            mut prefix,
+            mut suffix,
+        } => {
+            if !prefix.is_empty() {
+                prefix.remove(0);
+            }
+            if !suffix.is_empty() {
+                suffix.remove(0);
+            }
+            Unranked { prefix, suffix }
+        }
+    };
+    let row_info = Info {
+        typ: dep_info.typ,
+        shape: row_shape,
+    };
+
+    // This will only be true upon reduction on a scalar or rank-1 array, in which case reduction does nothing
+    if matches!(row_info.shape, Known(_)) {
+        return Ok(row_info);
+    }
+
+    let mut data_graph = DataGraph::from_node(func, &ctx.uiua.asm)?;
+    let mut info_graph = analyze_subgraph(
+        &data_graph,
+        &[row_info.clone(), row_info.clone()],
+        ctx.nvars,
+        ctx.reqs,
+        ctx.uiua,
+    )?;
+
+    if data_graph.stack.len() != 1 {
+        bail!(
+            "Reduction function must have exactly one output, but it has {}",
+            data_graph.stack.len()
+        );
+    }
+
+    let out_info = info_graph
+        .remove_node(data_graph.stack.pop().unwrap())
+        .unwrap()
+        .1
+        .left()
+        .unwrap();
+
+    if row_info.typ != out_info.typ {
+        bail!(
+            "Reduction function input and output types must match, but they are {} and {}",
+            typ_name(row_info.typ),
+            typ_name(out_info.typ)
+        );
+    }
+
+    match (&row_info.shape, &out_info.shape) {
+        (Ranked(inshape), Ranked(outshape)) => {
+            if inshape.len() != outshape.len() {
+                bail!(
+                    "Reduction function input and output ranks must match, but they are {} and {}",
+                    inshape.len(),
+                    outshape.len()
+                );
+            }
+            // for (lax, rax) in inshape.iter().zip(outshape.iter()) {
+            //     let req = Relation::eq(lax, rax);
+            //     if let Some(valid) = req.trivial() {
+            //         if !valid {
+            //             bail!("Reduction function input and output shapes must match, but they include axes of length {} and {}", lax, rax);
+            //         }
+            //     } else {
+            //         ctx.reqs.push(req.into());
+            //     }
+            // }
+        }
+        (Unranked { .. }, _) | (_, Unranked { .. }) => {
+            bail!("Unable to determine input and output ranks for reduction function")
+        }
+        (Known(_), _) | (_, Known(_)) => unreachable!(),
+    }
+
+    if matches!(func, uiua::Node::Prim(prim, _) if prim.class().is_pervasive()) {
+        Ok(row_info)
+    } else {
+        bail!("Reduce is currently only supported for pervasive functions");
+    }
 }
