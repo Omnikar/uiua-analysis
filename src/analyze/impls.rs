@@ -870,7 +870,7 @@ pub fn r#gen(ctx: AnalyzeCtx) -> Result<Info> {
     todo!()
 }
 
-// -- Iterating Modifiers --
+// -- _________ Modifiers --
 
 pub fn rows(funcs: &[SigNode], ctx: AnalyzeCtx) -> Result<Either<Info, Vec<Info>>> {
     let func = &funcs[0].node;
@@ -1080,7 +1080,7 @@ pub fn table(funcs: &[SigNode], ctx: AnalyzeCtx) -> Result<Either<Info, Vec<Info
     })
 }
 
-// -- Aggregating Modifiers --
+// -- Iterating Modifiers --
 
 // FIXME: This is not right for anything except pervasives currently
 pub fn reduce(funcs: &[SigNode], ctx: AnalyzeCtx) -> Result<Info> {
