@@ -64,7 +64,7 @@ fn match_axes(lhs: Axis, rhs: Axis, reqs: &mut Vec<Condition>) -> Result<Axis> {
         let req = Relation::eq(&lhs, &rhs);
         if let Some(valid) = req.trivial() {
             if !valid {
-                bail!("Cannot match axis lengths {} and {}", lhs, rhs);
+                bail!("Cannot match axis lengths {lhs} and {rhs}");
             }
         } else {
             reqs.push(req.into());
@@ -577,7 +577,7 @@ pub fn deshape_sub(sub: i32, ctx: AnalyzeCtx) -> Result<Info> {
         Ranked(mut shape) => {
             let rank = shape.len();
             let mut reduce_rank = |n| {
-                let reduced = shape.drain(..n + 1).product();
+                let reduced = shape.drain(..=n).product();
                 shape.insert(0, reduced);
             };
             if sub >= 0 {
@@ -603,12 +603,12 @@ pub fn deshape_sub(sub: i32, ctx: AnalyzeCtx) -> Result<Info> {
             mut suffix,
         } => {
             if sub < 0 && sub_pos < prefix.len() {
-                let reduced = prefix.drain(..sub_pos + 1).product();
+                let reduced = prefix.drain(..=sub_pos).product();
                 prefix.insert(0, reduced);
             } else if sub > 0 {
                 prefix.clear();
                 if sub_pos < suffix.len() {
-                    let reduced = suffix.drain(..suffix.len() - sub_pos + 1).product();
+                    let reduced = suffix.drain(..=suffix.len() - sub_pos).product();
                     suffix.insert(0, reduced);
                 }
             }
@@ -761,7 +761,7 @@ pub fn deduplicate(ctx: AnalyzeCtx) -> Result<Info> {
                 *len = Axis::newvar(ctx.nvars);
             }
         }
-    };
+    }
     Ok(dep_info)
 }
 

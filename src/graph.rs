@@ -104,7 +104,6 @@ impl<'a> DataGraph<'a> {
             Node::PopUnder(n, _span) => self
                 .stack
                 .extend(drain_args(&mut self.under_stack, *n).rev()),
-            Node::Push(_value) => self.stack.push(self.graph.add_node(Data::Node(node))),
             Node::Prim(Identity, _span) => {}
             Node::Prim(Pop, _span) => {
                 self.stack.pop();
@@ -180,8 +179,7 @@ impl<'a> DataGraph<'a> {
 
                 let (side, repeat_count) = sub
                     .side
-                    .map(|sub| (sub.side, sub.n.unwrap_or(1)))
-                    .unwrap_or((Left, 0));
+                    .map_or((Left, 0), |sub| (sub.side, sub.n.unwrap_or(1)));
 
                 let len = self.stack.len();
                 let repeat_range = if side == Left {
