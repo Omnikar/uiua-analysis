@@ -54,6 +54,17 @@ fn main() {
         Axis::newvar(&mut nvars),
         Axis::newvar(&mut nvars),
     ];
+    let shape2 = smallvec![
+        Axis::newvar(&mut nvars),
+        Axis::from(1),
+        Axis::newvar(&mut nvars),
+        Axis::newvar(&mut nvars),
+    ];
+    let shape3 = smallvec![
+        Axis::newvar(&mut nvars),
+        Axis::from(3),
+        Axis::newvar(&mut nvars),
+    ];
     // let shape2 = [4, 5].map(analyze::axis::Axis::from).into_iter().collect();
     let arg_infos = &[
         // analyze::Info {
@@ -68,6 +79,14 @@ fn main() {
         analyze::Info {
             typ: 0,
             shape: ShapeInfo::Ranked(shape),
+        },
+        analyze::Info {
+            typ: 0,
+            shape: ShapeInfo::Ranked(shape2),
+        },
+        analyze::Info {
+            typ: 0,
+            shape: ShapeInfo::Ranked(shape3),
         },
     ];
     let info_graph = analyze::analyze_graph(&data_graph, arg_infos, &uiua).unwrap();

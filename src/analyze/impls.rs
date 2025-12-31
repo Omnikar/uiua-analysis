@@ -1,7 +1,7 @@
 //! Primitive-specific functions for propagating static analysis `Info`
 
 use anyhow::{bail, Context, Result};
-use itertools::Either;
+use itertools::{Either, Itertools};
 use smallvec::{smallvec, SmallVec};
 use uiua::{SigNode, Value};
 
@@ -69,7 +69,7 @@ fn match_axes(lhs: Axis, rhs: Axis, reqs: &mut Vec<Condition>) -> Result<Axis> {
         } else {
             reqs.push(req.into());
         }
-        Ok(if lhs.complexity() < rhs.complexity() {
+        Ok(if lhs.complexity() <= rhs.complexity() {
             lhs
         } else {
             rhs
@@ -866,11 +866,7 @@ pub fn rows(funcs: &[SigNode], ctx: AnalyzeCtx) -> Result<Either<Info, Vec<Info>
     let len = ctx
         .dep_infos
         .iter()
-        .map(|info| match &info.shape {
-            Known(val) => Some(val.shape.first().copied().unwrap_or(1).into()),
-            Ranked(shape) => Some(shape.first().cloned().unwrap_or(1.into())),
-            Unranked { prefix, .. } => prefix.first().cloned(),
-        })
+        .map(|info| info.shape.len().map(|len| len.unwrap_or_else(|| 1.into())))
         .try_fold(Ok(1.into()), |acc, next| {
             next.map(|next| match_axes(acc?, next, ctx.reqs))
         })
@@ -912,6 +908,10 @@ pub fn rows(funcs: &[SigNode], ctx: AnalyzeCtx) -> Result<Either<Info, Vec<Info>
         });
     }
 
+    let data_graph = DataGraph::from_node(func, &ctx.uiua.asm)?;
+    let mut info_graph =
+        analyze_subgraph(&data_graph, &row_dep_infos, ctx.nvars, ctx.reqs, ctx.uiua)?;
+
     let process_info = |info: Info| {
         let shape = match info.shape {
             Known(val) => {
@@ -934,9 +934,6 @@ pub fn rows(funcs: &[SigNode], ctx: AnalyzeCtx) -> Result<Either<Info, Vec<Info>
         }
     };
 
-    let data_graph = DataGraph::from_node(func, &ctx.uiua.asm)?;
-    let mut info_graph =
-        analyze_subgraph(&data_graph, &row_dep_infos, ctx.nvars, ctx.reqs, ctx.uiua)?;
     Ok(if data_graph.stack.len() == 1 {
         let idx = data_graph.stack[0];
         let out_info = info_graph.remove_node(idx).unwrap().1.left().unwrap();
@@ -951,8 +948,121 @@ pub fn rows(funcs: &[SigNode], ctx: AnalyzeCtx) -> Result<Either<Info, Vec<Info>
     })
 }
 
-pub fn table(funcs: &[SigNode], ctx: AnalyzeCtx) -> Result<Info> {
-    todo!()
+pub fn table(funcs: &[SigNode], ctx: AnalyzeCtx) -> Result<Either<Info, Vec<Info>>> {
+    let func = &funcs[0].node;
+
+    let mut ax_iter = ctx
+        .dep_infos
+        .iter()
+        .map(|info| info.shape.len())
+        .filter(|len| !matches!(len, Some(None)))
+        .map(Option::flatten)
+        .peekable();
+    // The only leading axes whose positions in the final shape can be known for sure are those that come before the first input of unknown scalar status.
+    let leading_axes: Vec<Axis> = ax_iter
+        .by_ref()
+        .peeking_take_while(Option::is_some)
+        .map(Option::unwrap)
+        .collect();
+    // True if `leading_axes` is known to not contain all of the leading axes produced by `table`. If true, the final output will be `Unranked`.
+    let la_incomplete = ax_iter.next().is_some();
+
+    let mut row_dep_infos = Vec::new();
+
+    for info in &ctx.dep_infos {
+        // NOTE: This is copy-pasted from the analogous section of `rows` above. Should it be factored out?
+        let row_shape = match info.shape.clone() {
+            Known(val) => {
+                if val.shape.first().copied().unwrap_or(1) == 1 {
+                    Known(val.first(ctx.uiua)?)
+                } else {
+                    Ranked(val.shape[1..].iter().map(Into::into).collect())
+                }
+            }
+            Ranked(mut shape) => {
+                if !shape.is_empty() {
+                    shape.remove(0);
+                }
+                Ranked(shape)
+            }
+            Unranked {
+                mut prefix,
+                mut suffix,
+            } => {
+                if !prefix.is_empty() {
+                    prefix.remove(0);
+                }
+                if !suffix.is_empty() {
+                    suffix.remove(0);
+                }
+                Unranked { prefix, suffix }
+            }
+        };
+        row_dep_infos.push(Info {
+            typ: info.typ,
+            shape: row_shape,
+        });
+    }
+
+    let data_graph = DataGraph::from_node(func, &ctx.uiua.asm)?;
+    let mut info_graph =
+        analyze_subgraph(&data_graph, &row_dep_infos, ctx.nvars, ctx.reqs, ctx.uiua)?;
+
+    let process_info = |info: Info| {
+        let shape = match info.shape {
+            Known(val) => {
+                let mut shape: SymShape = val.shape.iter().map(Axis::from).collect();
+                if la_incomplete {
+                    Unranked {
+                        prefix: leading_axes.iter().cloned().collect(),
+                        suffix: shape,
+                    }
+                } else {
+                    shape.insert_many(0, leading_axes.iter().cloned());
+                    Ranked(shape)
+                }
+            }
+            Ranked(mut shape) => {
+                if la_incomplete {
+                    Unranked {
+                        prefix: leading_axes.iter().cloned().collect(),
+                        suffix: shape,
+                    }
+                } else {
+                    shape.insert_many(0, leading_axes.iter().cloned());
+                    Ranked(shape)
+                }
+            }
+            Unranked { mut prefix, suffix } => {
+                if la_incomplete {
+                    Unranked {
+                        prefix: leading_axes.iter().cloned().collect(),
+                        suffix,
+                    }
+                } else {
+                    prefix.insert_many(0, leading_axes.iter().cloned());
+                    Unranked { prefix, suffix }
+                }
+            }
+        };
+        Info {
+            typ: info.typ,
+            shape,
+        }
+    };
+
+    Ok(if data_graph.stack.len() == 1 {
+        let idx = data_graph.stack[0];
+        let out_info = info_graph.remove_node(idx).unwrap().1.left().unwrap();
+        Either::Left(process_info(out_info))
+    } else {
+        let mut out_infos = Vec::new();
+        for idx in data_graph.stack {
+            let out_info = info_graph.remove_node(idx).unwrap().1.left().unwrap();
+            out_infos.push(process_info(out_info));
+        }
+        Either::Right(out_infos)
+    })
 }
 
 // -- Aggregating Modifiers --

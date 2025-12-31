@@ -43,10 +43,22 @@ pub struct InfoGraph<'a> {
 }
 
 impl ShapeInfo {
+    /// Returns the rank if it is known
     fn rank(&self) -> Option<usize> {
         match self {
             Self::Ranked(shape) => Some(shape.len()),
             _ => None,
+        }
+    }
+
+    /// Returns `Some(Some(length))` if rank ≥1
+    /// Returns `Some(None)` if known to be a scalar
+    /// Returns `None` if whether it is a scalar is unknown
+    fn len(&self) -> Option<Option<Axis>> {
+        match self {
+            ShapeInfo::Known(val) => Some(val.shape.first().map(Into::into)),
+            ShapeInfo::Ranked(shape) => Some(shape.first().cloned()),
+            ShapeInfo::Unranked { prefix, .. } => prefix.first().cloned().map(Some),
         }
     }
 }
@@ -228,6 +240,7 @@ fn analyze_node<'a>(
 
         // -- Iterating Modifiers --
         Data::Node(Node::Mod(Rows, funcs, _span)) => impls::rows(funcs, ctx)?,
+        Data::Node(Node::Mod(Table, funcs, _span)) => impls::table(funcs, ctx)?,
         _ => todo!(),
     };
 
