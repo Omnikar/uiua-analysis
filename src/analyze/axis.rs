@@ -4,8 +4,9 @@ use std::collections::HashMap;
 use std::ops::{Add, Mul, Sub};
 
 /// A single axis of a symbolic shape, represented as a multivariate integer-coefficient polynomial of the relevant unknowns
-/// The polynomial is represented as a hashmap from exponent values to coefficients. For example, an entry of `[1,2] -> 3` represents the term `3 * x0 * x1^2` in the polynomial.
-#[derive(Clone, Debug)]
+/// The polynomial is represented as a hashmap from exponent values to coefficients. For example, an entry of `[1, 2] -> 3` represents the term `3x₀x₁²` in the polynomial.
+// #[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum Axis {
     Const(isize),
     Var(HashMap<SmallVec<[usize; 4]>, isize>),
@@ -90,6 +91,20 @@ impl Axis {
                 1
             }
         }
+    }
+
+    /// The number of variabe IDs this `Axis` uses
+    pub fn to_nvars(&self) -> usize {
+        match self {
+            Axis::Const(_) => 0,
+            Axis::Var(map) => map.keys().map(SmallVec::len).max().unwrap_or_default(),
+        }
+    }
+}
+
+impl std::fmt::Debug for Axis {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, f)
     }
 }
 

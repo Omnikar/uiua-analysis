@@ -56,15 +56,15 @@ fn main() {
     ];
     // let shape2 = [4, 5].map(analyze::axis::Axis::from).into_iter().collect();
     let arg_infos = &[
-        analyze::Info {
-            typ: 0,
-            shape: ShapeInfo::Known([1, 2, 3].into()),
-            // shape: ShapeInfo::Ranked(shape),
-            // shape: ShapeInfo::Unranked {
-            //     prefix: shape,
-            //     suffix: shape2,
-            // },
-        },
+        // analyze::Info {
+        //     typ: 0,
+        //     shape: ShapeInfo::Known([1, 2, 3].into()),
+        //     // shape: ShapeInfo::Ranked(shape),
+        //     // shape: ShapeInfo::Unranked {
+        //     //     prefix: shape,
+        //     //     suffix: shape2,
+        //     // },
+        // },
         analyze::Info {
             typ: 0,
             shape: ShapeInfo::Ranked(shape),

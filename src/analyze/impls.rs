@@ -1,12 +1,13 @@
 //! Primitive-specific functions for propagating static analysis `Info`
 
 use anyhow::{bail, Context, Result};
+use itertools::Either;
 use smallvec::{smallvec, SmallVec};
 use uiua::{SigNode, Value};
 
 use super::axis::{Axis, Condition, Relation};
-use super::{Info, ShapeInfo, SymShape};
-// use crate::graph::{Data, DataGraph, SmallStack};
+use super::{analyze_subgraph, Info, ShapeInfo, SymShape};
+use crate::graph::DataGraph;
 
 use ShapeInfo::*;
 
@@ -855,8 +856,99 @@ pub fn r#gen(ctx: AnalyzeCtx) -> Result<Info> {
 
 // -- Iterating Modifiers --
 
-pub fn rows(funcs: &[SigNode], ctx: AnalyzeCtx) -> Result<Info> {
-    todo!()
+pub fn rows(funcs: &[SigNode], ctx: AnalyzeCtx) -> Result<Either<Info, Vec<Info>>> {
+    let func = &funcs[0].node;
+
+    // Creates a new variable if any arguments are unranked with an empty prefix
+    // Errors if any axis matches fail
+    // FIXME: This probably shouldn't short circuit at the first `None`, since it's still possible to find length mismatches even if some of the lengths are unknown
+    // FIXME: If the suffix is nonempty, that is enough to know the value is not a scalar, and introduce a new variable for the axis that must match instead of giving up
+    let len = ctx
+        .dep_infos
+        .iter()
+        .map(|info| match &info.shape {
+            Known(val) => Some(val.shape.first().copied().unwrap_or(1).into()),
+            Ranked(shape) => Some(shape.first().cloned().unwrap_or(1.into())),
+            Unranked { prefix, .. } => prefix.first().cloned(),
+        })
+        .try_fold(Ok(1.into()), |acc, next| {
+            next.map(|next| match_axes(acc?, next, ctx.reqs))
+        })
+        .transpose()?
+        .unwrap_or_else(|| Axis::newvar(ctx.nvars));
+
+    let mut row_dep_infos = Vec::new();
+    for info in &ctx.dep_infos {
+        let row_shape = match info.shape.clone() {
+            Known(val) => {
+                if val.shape.first().copied().unwrap_or(1) == 1 {
+                    Known(val.first(ctx.uiua)?)
+                } else {
+                    Ranked(val.shape[1..].iter().map(Into::into).collect())
+                }
+            }
+            Ranked(mut shape) => {
+                if !shape.is_empty() {
+                    shape.remove(0);
+                }
+                Ranked(shape)
+            }
+            Unranked {
+                mut prefix,
+                mut suffix,
+            } => {
+                if !prefix.is_empty() {
+                    prefix.remove(0);
+                }
+                if !suffix.is_empty() {
+                    suffix.remove(0);
+                }
+                Unranked { prefix, suffix }
+            }
+        };
+        row_dep_infos.push(Info {
+            typ: info.typ,
+            shape: row_shape,
+        });
+    }
+
+    let process_info = |info: Info| {
+        let shape = match info.shape {
+            Known(val) => {
+                let mut shape: SymShape = val.shape.iter().map(Axis::from).collect();
+                shape.insert(0, len.clone());
+                Ranked(shape)
+            }
+            Ranked(mut shape) => {
+                shape.insert(0, len.clone());
+                Ranked(shape)
+            }
+            Unranked { mut prefix, suffix } => {
+                prefix.insert(0, len.clone());
+                Unranked { prefix, suffix }
+            }
+        };
+        Info {
+            typ: info.typ,
+            shape,
+        }
+    };
+
+    let data_graph = DataGraph::from_node(func, &ctx.uiua.asm)?;
+    let mut info_graph =
+        analyze_subgraph(&data_graph, &row_dep_infos, ctx.nvars, ctx.reqs, ctx.uiua)?;
+    Ok(if data_graph.stack.len() == 1 {
+        let idx = data_graph.stack[0];
+        let out_info = info_graph.remove_node(idx).unwrap().1.left().unwrap();
+        Either::Left(process_info(out_info))
+    } else {
+        let mut out_infos = Vec::new();
+        for idx in data_graph.stack {
+            let out_info = info_graph.remove_node(idx).unwrap().1.left().unwrap();
+            out_infos.push(process_info(out_info));
+        }
+        Either::Right(out_infos)
+    })
 }
 
 pub fn table(funcs: &[SigNode], ctx: AnalyzeCtx) -> Result<Info> {
