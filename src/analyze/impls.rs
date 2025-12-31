@@ -846,7 +846,7 @@ pub fn member_of(ctx: AnalyzeCtx) -> Result<Info> {
 pub fn rand(_ctx: AnalyzeCtx) -> Result<Info> {
     Ok(Info {
         typ: 0,
-        shape: Ranked(smallvec![1.into()]),
+        shape: Ranked(SymShape::new()),
     })
 }
 

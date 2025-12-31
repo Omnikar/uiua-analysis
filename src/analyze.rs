@@ -238,6 +238,9 @@ fn analyze_node<'a>(
 
         // -- Dyadic Array Functions --
 
+        // -- Misc Functions --
+        Data::Node(Node::Prim(Rand, _span)) => Left(impls::rand(ctx)?),
+
         // -- Iterating Modifiers --
         Data::Node(Node::Mod(Rows, funcs, _span)) => impls::rows(funcs, ctx)?,
         Data::Node(Node::Mod(Table, funcs, _span)) => impls::table(funcs, ctx)?,
