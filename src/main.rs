@@ -1,6 +1,8 @@
 mod analyze;
-mod compile_experiment;
 mod graph;
+
+mod compile_experiment;
+mod compile_experiment_2;
 
 use itertools::Itertools;
 use petgraph::{graph::NodeIndex, Graph};
@@ -14,9 +16,25 @@ fn main() {
     let mut uiua = uiua::Uiua::with_native_sys();
     uiua.asm = asm;
 
-    // compile::test(&asm);
-    // let node = &asm.root;
-    // let graph = graph::DataGraph::from_node(&asm, node).unwrap();
+    // compile_experiment::test(&uiua.asm);
+
+    analyze_test(&uiua);
+    // use analyze::axis::Axis;
+    // let mut nvars = 0;
+    // let x0 = Axis::newvar(&mut nvars);
+    // let x1 = Axis::newvar(&mut nvars);
+    // let x2 = Axis::newvar(&mut nvars);
+    // let ax = Axis::from(4) * &x0 * x1.pow(3) + x2 * x0.pow(2);
+    // let ax2 = ax.pow(2);
+    // dbg!(ax, ax2);
+    // let ax = Axis::from(2) * &x0 * x1.pow(2) + x0.pow(3);
+    // let new_ax = ax
+    //     .substitute([(1, Axis::from(5)), (0, Axis::from(2) * x2)])
+    //     .unwrap();
+    // dbg!(ax, new_ax);
+
+    // let node = &uiua.asm.root;
+    // let graph = graph::DataGraph::from_node(node, &uiua.asm).unwrap();
     // let mut f = std::fs::File::create("graph.dot").unwrap();
     // let s = format!(
     //     "{:?}",
@@ -33,38 +51,33 @@ fn main() {
     // writeln!(f, r#"    node [fontname="Uiua386"]"#).unwrap();
     // writeln!(f, r#"    edge [fontname="Uiua386"]"#).unwrap();
     // write!(f, "{s}").unwrap();
+}
 
-    // let a = Axis::from(3);
-    // let mut b = Axis::from(4);
-    // *b.term_mut(&[1]) = 1;
-    // let mut c = Axis::from(2);
-    // *c.term_mut(&[1]) = -1;
-    // dbg!(&a, &b, &c, &a + &b, &b + &c, &a * &b, &a * &c, &b * &c);
-    // println!("{}", std::mem::size_of::<Axis>());
-
+fn analyze_test(uiua: &uiua::Uiua) {
     use {
         analyze::{axis::Axis, ShapeInfo},
         smallvec::smallvec,
     };
     let data_graph = graph::DataGraph::from_node(&uiua.asm.root, &uiua.asm).unwrap();
+    dbg!(&data_graph);
     // let shape = [2, 3].map(analyze::axis::Axis::from).into_iter().collect();
-    let mut nvars = 0;
-    let shape = smallvec![
-        Axis::newvar(&mut nvars),
-        // Axis::newvar(&mut nvars),
-        // Axis::newvar(&mut nvars),
-    ];
-    let shape2 = smallvec![
-        Axis::newvar(&mut nvars),
-        Axis::from(1),
-        Axis::newvar(&mut nvars),
-        Axis::newvar(&mut nvars),
-    ];
-    let shape3 = smallvec![
-        Axis::newvar(&mut nvars),
-        Axis::from(3),
-        Axis::newvar(&mut nvars),
-    ];
+    // let mut nvars = 0;
+    // let shape = smallvec![
+    //     Axis::newvar(&mut nvars),
+    //     Axis::newvar(&mut nvars),
+    //     // Axis::newvar(&mut nvars),
+    // ];
+    // let shape2 = smallvec![
+    //     Axis::newvar(&mut nvars),
+    //     // Axis::from(1),
+    //     // Axis::newvar(&mut nvars),
+    //     Axis::newvar(&mut nvars),
+    // ];
+    // let shape3 = smallvec![
+    //     Axis::newvar(&mut nvars),
+    //     Axis::from(3),
+    //     Axis::newvar(&mut nvars),
+    // ];
     // let shape2 = [4, 5].map(analyze::axis::Axis::from).into_iter().collect();
     let arg_infos = &[
         // analyze::Info {
@@ -76,22 +89,15 @@ fn main() {
         //     //     suffix: shape2,
         //     // },
         // },
-        analyze::Info {
-            typ: 0,
-            shape: ShapeInfo::Ranked(shape),
-        },
-        analyze::Info {
-            typ: 0,
-            shape: ShapeInfo::Ranked(shape2),
-        },
-        analyze::Info {
-            typ: 0,
-            shape: ShapeInfo::Ranked(shape3),
-        },
+        // analyze::Info::new(0, ShapeInfo::Ranked(shape)),
+        // analyze::Info::new(0, ShapeInfo::Ranked(shape2)),
+        // analyze::Info::new(0, ShapeInfo::Ranked(shape3)),
     ];
-    let info_graph = analyze::analyze_graph(&data_graph, arg_infos, &uiua).unwrap();
-    dbg!(&info_graph);
-    for req in &info_graph.reqs {
+    let infos =
+        analyze::analyze_func_graph(&data_graph, arg_infos, &mut analyze::FuncLib::new(), uiua)
+            .unwrap();
+    dbg!(&infos);
+    for req in &infos.reqs {
         match req {
             analyze::axis::Condition::Or(rels) => {
                 for rel in rels {
@@ -111,7 +117,7 @@ fn main() {
     }
 
     let mut f = std::fs::File::create("graph.dot").unwrap();
-    let s = format!("{:?}", petgraph::dot::Dot::new(&info_graph.graph));
+    let s = format!("{:?}", petgraph::dot::Dot::new(&data_graph.graph));
     let s = s.strip_prefix("digraph {\n").unwrap();
     writeln!(f, "digraph {{").unwrap();
     writeln!(f, "    node [shape=box]").unwrap();

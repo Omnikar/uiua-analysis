@@ -9,8 +9,8 @@ pub type SmallStack = SmallVec<[NodeIndex; 4]>;
 
 /// A graph structure used to represent the tacit flow of data through a program
 #[derive(Default, Debug, Clone)]
-pub struct DataGraph<'a> {
-    pub graph: StableGraph<Data<'a>, usize>,
+pub struct DataGraph<'u> {
+    pub graph: StableGraph<Data<'u>, usize>,
     pub stack: Stack,
     pub under_stack: Stack,
     pub arg_count: usize,
@@ -18,17 +18,17 @@ pub struct DataGraph<'a> {
 
 /// A single unit of a data graph
 #[derive(Debug, Clone, Copy)]
-pub enum Data<'a> {
+pub enum Data<'u> {
     /// A Uiua execution Node
-    Node(&'a Node),
+    Node(&'u Node),
     /// An argument to the function represented by the full graph
     Arg(usize),
     /// A single output from a multi-output `Data` instance
     Out,
 }
 
-impl<'a> DataGraph<'a> {
-    pub fn from_node(node: &'a Node, asm: &Assembly) -> Result<Self> {
+impl<'u> DataGraph<'u> {
+    pub fn from_node(node: &'u Node, asm: &Assembly) -> Result<Self> {
         let mut data_graph = Self::default();
         data_graph.process_node(node)?;
         data_graph.prune(asm);
@@ -67,7 +67,7 @@ impl<'a> DataGraph<'a> {
     }
 
     /// Recursively build the graph by handling different node types, including processing stack manipulation
-    pub fn process_node(&mut self, node: &'a Node) -> Result<()> {
+    pub fn process_node(&mut self, node: &'u Node) -> Result<()> {
         let sig = node.sig().ok().context("Failed to get node signature")?;
         self.extend_args(sig.args());
 

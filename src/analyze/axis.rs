@@ -82,6 +82,28 @@ impl Axis {
         }
     }
 
+    /// If the entire value consists of only a single variable with coefficient 1, return the index of that variable
+    pub fn single_var(&self) -> Option<usize> {
+        let Axis::Var(map) = self else {
+            return None;
+        };
+        let mut idx = None;
+        for (exps, coef) in map {
+            if *coef == 0 {
+                continue;
+            }
+            if *coef != 1 {
+                return None;
+            }
+            if exps.iter().sum::<usize>() == 1 && idx.is_none() {
+                idx = Some(exps.iter().find_position(|exp| **exp == 1)?.0)
+            } else {
+                return None;
+            }
+        }
+        idx
+    }
+
     /// Heuristic for deciding which of two equal expressions to proceed with
     pub fn complexity(&self) -> usize {
         match self {
@@ -99,6 +121,39 @@ impl Axis {
             Axis::Const(_) => 0,
             Axis::Var(map) => map.keys().map(SmallVec::len).max().unwrap_or_default(),
         }
+    }
+
+    pub fn pow(&self, pow: usize) -> Axis {
+        std::iter::repeat_n(self, pow).fold(1.into(), Axis::mul)
+    }
+
+    /// Given pairs of variable indices and Axis instances, return the result of substituting each Axis as the given variable
+    /// Requires a substitution to be provided for *every* variable, erroring if insufficient substitutions are provided
+    pub fn substitute(&self, substs: &HashMap<usize, Axis>) -> anyhow::Result<Axis> {
+        use anyhow::Context;
+
+        let substs = (0..self.to_nvars())
+            .map(|i| substs.get(&i))
+            .collect::<Option<Vec<_>>>()
+            .context("Not enough variables provided for substitution")?;
+
+        let Axis::Var(map) = self else {
+            // There are no substitutions to be made on a constant
+            return Ok(self.clone());
+        };
+
+        Ok(map
+            .iter()
+            .map(|(exps, coef)| {
+                Axis::from(*coef)
+                    * exps
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, exp)| **exp != 0)
+                        .map(|(i, exp)| substs[i].pow(*exp))
+                        .product::<Axis>()
+            })
+            .sum())
     }
 }
 
@@ -330,9 +385,20 @@ impl Mul for &Axis {
     }
 }
 
+impl std::iter::Sum for Axis {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.reduce(Add::add).unwrap_or_else(|| Axis::Const(0))
+    }
+}
+impl<'a> std::iter::Sum<&'a Axis> for Axis {
+    fn sum<I: Iterator<Item = &'a Axis>>(iter: I) -> Axis {
+        iter.fold(Axis::Const(0), |acc, next| acc + next)
+    }
+}
+
 impl std::iter::Product for Axis {
     fn product<I: Iterator<Item = Axis>>(iter: I) -> Axis {
-        iter.reduce(Mul::mul).unwrap_or(Axis::Const(1))
+        iter.reduce(Mul::mul).unwrap_or_else(|| Axis::Const(1))
     }
 }
 impl<'a> std::iter::Product<&'a Axis> for Axis {
@@ -419,6 +485,19 @@ impl Relation {
     }
 }
 
+impl std::fmt::Display for Relation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let sym = match (self.ineq, self.inv) {
+            (false, false) => '=',
+            (false, true) => '≠',
+            (true, false) => '>',
+            (true, true) => '≤',
+        };
+
+        write!(f, "{} {} 0", self.expr, sym)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Condition {
     Or(SmallVec<[Relation; 4]>),
@@ -434,7 +513,7 @@ impl Condition {
     /// Returns `Some(false)` if the condition can be determined to be false by only comparing constants
     /// Returns `Some(true)` if the condition can be determined to be true by only comparing constants
     /// Returns `None` otherwise
-    fn trivial(&self) -> Option<bool> {
+    pub fn trivial(&self) -> Option<bool> {
         match self {
             Self::Or(rels) => {
                 let mut out = Some(false);
@@ -448,5 +527,49 @@ impl Condition {
                 out
             }
         }
+    }
+
+    /// The number of variabe IDs this `Condition`'s `Axis` instances use
+    pub fn to_nvars(&self) -> usize {
+        match self {
+            Self::Or(rels) => rels
+                .iter()
+                .map(|rel| rel.expr.to_nvars())
+                .max()
+                .unwrap_or_default(),
+        }
+    }
+
+    pub fn substitute(&self, substs: &HashMap<usize, Axis>) -> anyhow::Result<Self> {
+        match self {
+            Self::Or(rels) => rels
+                .iter()
+                .map(|rel| {
+                    let mut rel = rel.clone();
+                    rel.expr = rel.expr.substitute(substs)?;
+                    Ok(rel)
+                })
+                .collect::<anyhow::Result<SmallVec<[Relation; 4]>>>()
+                .map(Self::Or),
+        }
+    }
+}
+
+impl std::fmt::Display for Condition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Condition::Or(rels) => {
+                if rels.is_empty() {
+                    write!(f, "FALSE")?;
+                } else {
+                    write!(f, "{}", rels[0])?;
+                    for rel in &rels[1..] {
+                        write!(f, " OR {}", rel)?;
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 }
