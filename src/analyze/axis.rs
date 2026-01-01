@@ -303,7 +303,10 @@ impl Mul for Axis {
                             lcoef * *rcoef,
                         )
                     })
-                    .collect(),
+                    .fold(HashMap::new(), |mut map, (exps, coef)| {
+                        *map.entry(exps).or_default() += coef;
+                        map
+                    }),
             ),
         }
     }
