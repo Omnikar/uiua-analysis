@@ -15,9 +15,16 @@ use axis::{Axis, Condition};
 /// Symbolic shape
 pub type SymShape = SmallVec<[Axis; 4]>;
 
+pub struct AnalyzedFunc<'u> {
+    pub id: uiua::FunctionId,
+    pub graph: DataGraph<'u>,
+    pub infos: FuncInfos<'u>,
+    pub span: usize,
+}
+
 /// Graphs and analysis results for bound functions
 pub struct FuncLib<'u> {
-    funcs: Vec<(uiua::FunctionId, FuncInfos<'u>)>,
+    pub funcs: Vec<AnalyzedFunc<'u>>,
 }
 
 /// Statically-inferred shape information about data flowing through a program
@@ -42,7 +49,7 @@ pub struct Info {
     pub subfunc_idxs: SmallVec<[usize; 2]>,
 }
 
-type Infos = HashMap<NodeIndex, Info>;
+pub type Infos = HashMap<NodeIndex, Info>;
 type WorkingInfoGraph<'u> = StableGraph<(Data<'u>, Option<Either<Info, Vec<Info>>>), usize>;
 
 #[derive(Clone, Debug)]
@@ -52,6 +59,22 @@ pub struct FuncInfos<'u> {
     pub subfuncs: Vec<(DataGraph<'u>, Infos)>,
     pub args: SmallVec<[Info; 2]>,
     pub outs: SmallVec<[Info; 1]>,
+}
+
+impl<'u> AnalyzedFunc<'u> {
+    pub fn new(
+        id: uiua::FunctionId,
+        graph: DataGraph<'u>,
+        infos: FuncInfos<'u>,
+        span: usize,
+    ) -> Self {
+        Self {
+            id,
+            graph,
+            infos,
+            span,
+        }
+    }
 }
 
 impl<'u> FuncLib<'u> {
@@ -69,7 +92,7 @@ impl<'u> FuncLib<'u> {
         self.funcs
             .iter()
             .enumerate()
-            .filter_map(|(i, (this_id, infos))| (*id == *this_id).then_some((i, infos)))
+            .filter_map(|(i, func)| (*id == func.id).then_some((i, &func.infos)))
             .find_map(|(func_i, func_infos)| {
                 try_match_func(arg_infos, func_infos, nvars).map(|info| (func_i, info))
             })
@@ -85,7 +108,7 @@ fn try_match_func(
     func_infos: &FuncInfos,
     nvars: &mut usize,
 ) -> Option<Result<Either<Info, Vec<Info>>>> {
-    dbg!(arg_infos, func_infos);
+    // dbg!(arg_infos, func_infos);
     // Axis variable substitutions to be made
     let mut substs = HashMap::new();
     for (arg, func_arg) in arg_infos.iter().zip(func_infos.args.iter()) {
@@ -420,38 +443,44 @@ fn analyze_node<'u>(
         Data::Arg(i) => Left(arg_infos.get(i).context("Insufficient arg info")?.clone()),
         Data::Out => bail!("`Out` node not handled"),
         Data::Node(Node::Push(val)) => Left(Info::new(typ(val), ShapeInfo::Known(val.clone()))),
-        Data::Node(Node::Call(func, _span)) => {
-            dbg!(&ctx.dep_infos);
+        Data::Node(Node::Call(func, span)) => {
+            // dbg!(&ctx.dep_infos);
             let mut func_result = ctx.funclib.find(&func.id, &ctx.dep_infos, ctx.nvars);
             if func_result.is_none() {
                 let node = &ctx.uiua.asm[func];
                 let data_graph = DataGraph::from_node(node, &ctx.uiua.asm)?;
                 // Analyze the function on a generic set of arguments at this rank
-                let generic_arg_infos = ctx
-                    .dep_infos
-                    .iter()
-                    .map(|info| {
-                        use ShapeInfo::*;
-                        let mut new_axes = |num: usize| {
-                            std::iter::repeat_n((), num)
-                                .map(|_| Axis::newvar(ctx.nvars))
-                                .collect()
-                        };
-                        let shape = match &info.shape {
-                            Known(val) => Ranked(new_axes(val.shape.len())),
-                            Ranked(shape) => Ranked(new_axes(shape.len())),
-                            // TODO: Maybe unranked should just become generic unranked?
-                            Unranked { prefix, suffix } => Unranked {
-                                prefix: new_axes(prefix.len()),
-                                suffix: new_axes(suffix.len()),
-                            },
-                        };
-                        Info::new(info.typ, shape)
-                    })
-                    .collect_vec();
+                // let generic_arg_infos = ctx
+                //     .dep_infos
+                //     .iter()
+                //     .map(|info| {
+                //         use ShapeInfo::*;
+                //         let mut new_axes = |num: usize| {
+                //             std::iter::repeat_n((), num)
+                //                 .map(|_| Axis::newvar(ctx.nvars))
+                //                 .collect()
+                //         };
+                //         let shape = match &info.shape {
+                //             Known(val) => Ranked(new_axes(val.shape.len())),
+                //             Ranked(shape) => Ranked(new_axes(shape.len())),
+                //             // TODO: Maybe unranked should just become generic unranked?
+                //             Unranked { prefix, suffix } => Unranked {
+                //                 prefix: new_axes(prefix.len()),
+                //                 suffix: new_axes(suffix.len()),
+                //             },
+                //         };
+                //         Info::new(info.typ, shape)
+                //     })
+                //     .collect_vec();
+                let generic_arg_infos = &ctx.dep_infos;
                 let func_infos =
                     analyze_func_graph(&data_graph, &generic_arg_infos, ctx.funclib, ctx.uiua)?;
-                ctx.funclib.funcs.push((func.id.clone(), func_infos));
+                ctx.funclib.funcs.push(AnalyzedFunc::new(
+                    func.id.clone(),
+                    data_graph,
+                    func_infos,
+                    *span,
+                ));
 
                 func_result = ctx.funclib.find(&func.id, &ctx.dep_infos, ctx.nvars);
             }

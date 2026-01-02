@@ -17,8 +17,9 @@ fn main() {
     uiua.asm = asm;
 
     // compile_experiment::test(&uiua.asm);
+    compile_experiment_2::compile_test(&uiua).unwrap();
 
-    analyze_test(&uiua);
+    // analyze_test(&uiua);
     // use analyze::axis::Axis;
     // let mut nvars = 0;
     // let x0 = Axis::newvar(&mut nvars);
