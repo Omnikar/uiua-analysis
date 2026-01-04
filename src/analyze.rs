@@ -558,6 +558,9 @@ fn analyze_node<'u>(
         // -- Iterating Modifiers --
         Data::Node(Node::Mod(Reduce, funcs, _span)) => Left(impls::reduce(funcs, ctx)?),
 
+        // -- Not yet categorized --
+        Data::Node(Node::Prim(Sys(uiua::SysOp::Print), _span)) => Right(Vec::new()),
+
         _ => todo!(),
     };
 

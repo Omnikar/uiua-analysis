@@ -4,10 +4,13 @@ use melior::{
     dialect::{
         arith, func,
         ods::{tensor, tosa},
-        DialectRegistry,
+        scf, DialectRegistry,
     },
     ir::{
-        attribute::{FlatSymbolRefAttribute, StringAttribute, TypeAttribute},
+        attribute::{
+            ArrayAttribute, BoolAttribute, DenseElementsAttribute, FlatSymbolRefAttribute,
+            FloatAttribute, IntegerAttribute, StringAttribute, TypeAttribute,
+        },
         operation::OperationLike,
         r#type::{FunctionType, RankedTensorType},
         *,
@@ -31,6 +34,7 @@ const DYN_AX: u64 = i64::MAX as u64 + 1;
 #[derive(Clone, Copy)]
 struct CompileContext<'c, 'u> {
     context: &'c Context,
+    index_type: Type<'c>,
     float_type: Type<'c>,
     uiua: &'u uiua::Uiua,
 }
@@ -39,8 +43,6 @@ struct CompiledFuncLib<'c> {
     funcs: Vec<Operation<'c>>,
 }
 
-// type WorkingCompileGraph<'c, 'a> =
-//     StableGraph<(Data<'a>, Option<Either<Value<'c, 'a>, Vec<Value<'c, 'a>>>>), usize>;
 type FuncCompileGraph<'c, 'a> = StableGraph<(Data<'a>, Option<Value<'c, 'a>>), usize>;
 
 pub fn compile_test(uiua: &uiua::Uiua) -> Result<()> {
@@ -50,14 +52,18 @@ pub fn compile_test(uiua: &uiua::Uiua) -> Result<()> {
     context.append_dialect_registry(&registry);
     context.load_all_available_dialects();
 
+    let index_type = Type::index(&context);
     let float_type = Type::float64(&context);
     let ctx = CompileContext {
         context: &context,
+        index_type,
         float_type,
         uiua,
     };
 
-    let mut module = Module::new(Location::unknown(&context));
+    // let mut module = Module::new(Location::unknown(&context));
+    let mut module = Module::parse(ctx.context, include_str!("print_float.mlir"))
+        .context("Failed to parse module")?;
 
     let mut funclib = FuncLib::new();
 
@@ -66,9 +72,9 @@ pub fn compile_test(uiua: &uiua::Uiua) -> Result<()> {
     let infos = analyze_func_graph(&data_graph, &[], &mut funclib, uiua)?;
 
     let func_id = uiua::FunctionId::Named("main".into());
-    // span 0 smh
+    let span = uiua.asm.root.span().context("Missing span for root node")?;
     funclib.funcs.push(crate::analyze::AnalyzedFunc::new(
-        func_id, data_graph, infos, 0,
+        func_id, data_graph, infos, span,
     ));
 
     for i in 0..funclib.funcs.len() {
@@ -76,9 +82,20 @@ pub fn compile_test(uiua: &uiua::Uiua) -> Result<()> {
         module.body().append_operation(func);
     }
 
-    println!("{}", module.as_operation());
     assert!(module.as_operation().verify());
 
+    println!("before passes");
+    println!("{}", module.as_operation());
+
+    let pass_manager = PassManager::new(&context);
+    pass_manager.enable_verifier(true);
+    pass_manager.add_pass(pass::transform::create_canonicalizer());
+    // pass_manager.add_pass(pass::conversion::create_tosa_to_linalg());
+    pass_manager.add_pass(pass::conversion::create_scf_to_control_flow()); // needed because to_llvm doesn't include it.
+    pass_manager.add_pass(pass::conversion::create_to_llvm());
+    pass_manager.run(&mut module)?;
+
+    println!("after passes");
     println!("{}", module.as_operation());
 
     Ok(())
@@ -120,21 +137,33 @@ fn compile_func<'c>(
         let out_type = mk_tensor_type(&out_info.shape, ctx);
         sig_out.push(out_type);
     }
+    if func_name == "main" {
+        sig_out.push(ctx.index_type);
+    }
 
     let block = Block::new(&arg_types);
-    // let mut outs = Vec::with_capacity(func.infos.outs.len());
 
     for root in func.graph.roots(&ctx.uiua.asm) {
         compile_node(root, &block, &mut compile_graph, &func.infos.map, ctx)?;
     }
 
-    let outs = func
-        .graph
-        .stack
-        .iter()
-        .map(|&idx| compile_graph.node_weight(idx).and_then(|(_, v)| *v))
-        .collect::<Option<Vec<_>>>()
-        .context("Did not compile required node")?;
+    let outs = if func_name != "main" {
+        func.graph
+            .stack
+            .iter()
+            .map(|&idx| compile_graph.node_weight(idx).and_then(|(_, v)| *v))
+            .collect::<Option<Vec<_>>>()
+            .context("Did not compile required node")?
+    } else {
+        vec![block
+            .append_operation(arith::constant(
+                ctx.context,
+                IntegerAttribute::new(ctx.index_type, 0).into(),
+                loc,
+            ))
+            .result(0)?
+            .into()]
+    };
     block.append_operation(func::r#return(&outs, loc));
 
     let region = Region::new();
@@ -154,7 +183,6 @@ fn compile_node<'c, 'a>(
     idx: NodeIndex,
     block: &'a Block<'c>,
     compile_graph: &mut FuncCompileGraph<'c, 'a>,
-    // Might need to be an Either<Info, Vec<Info>>
     infos: &Infos,
     ctx: CompileContext<'c, '_>,
 ) -> Result<()> {
@@ -181,7 +209,7 @@ fn compile_node<'c, 'a>(
         .0;
     dbg!(&data);
     let value: Value = match data {
-        Data::Arg(i) => block.argument(i).unwrap().into(),
+        Data::Arg(i) => block.argument(i)?.into(),
         Data::Out => todo!(),
         Data::Node(Node::Push(value)) => {
             let loc = Location::unknown(ctx.context);
@@ -193,20 +221,15 @@ fn compile_node<'c, 'a>(
             let val_type = mk_tensor_type(&ShapeInfo::Known(value.clone()), ctx);
             let elements: Vec<f64> = arr.elements().copied().collect();
 
-            let mut element_values = Vec::new();
+            let mut element_attrs = Vec::new();
             for elem in elements {
-                let op = arith::constant(
-                    ctx.context,
-                    melior::ir::attribute::FloatAttribute::new(ctx.context, ctx.float_type, elem)
-                        .into(),
-                    loc,
-                );
-                let val = block.append_operation(op).result(0).unwrap().into();
-                element_values.push(val);
+                let attr = FloatAttribute::new(ctx.context, ctx.float_type, elem);
+                element_attrs.push(attr.into());
             }
+            let attr = DenseElementsAttribute::new(val_type, &element_attrs)?.into();
 
-            let op = tensor::from_elements(ctx.context, val_type, &element_values, loc).into();
-            block.append_operation(op).result(0).unwrap().into()
+            let op = arith::constant(ctx.context, attr, loc);
+            block.append_operation(op).result(0)?.into()
         }
         Data::Node(Node::Call(func, span)) => {
             let loc = span_to_loc(*span, ctx);
@@ -226,7 +249,7 @@ fn compile_node<'c, 'a>(
             }
             let out_type = mk_tensor_type(&out_info.shape, ctx);
             let op = func::call(ctx.context, ref_attr, &args, &[out_type], loc);
-            block.append_operation(op).result(0).unwrap().into()
+            block.append_operation(op).result(0)?.into()
         }
         Data::Node(Node::Prim(Add, span)) => {
             let lhs = deps[0];
@@ -249,8 +272,6 @@ fn compile_node<'c, 'a>(
                 .1
                 .context("Argument not compiled")?;
 
-            // let lhs_type = mk_tensor_type(&lhs_info.shape);
-            // let rhs_type = mk_tensor_type(&rhs_info.shape);
             let out_type = mk_tensor_type(&out_info.shape, ctx);
 
             let loc = span_to_loc(*span, ctx);
@@ -260,7 +281,103 @@ fn compile_node<'c, 'a>(
                 .input_2(rhs_val)
                 .output(out_type)
                 .build();
-            block.append_operation(op.into()).result(0).unwrap().into()
+            block.append_operation(op.into()).result(0)?.into()
+        }
+        Data::Node(Node::Prim(Sys(uiua::SysOp::Print), span)) => {
+            let loc = span_to_loc(*span, ctx);
+            let arg_info = infos.get(&deps[0]).context("Did not analyze argument")?;
+            if arg_info.typ != 0 {
+                bail!("Cannot print non numbers currently");
+            }
+            let len = match &arg_info.shape {
+                ShapeInfo::Known(val) => val.shape.elements() as u64,
+                ShapeInfo::Ranked(shape) => shape
+                    .iter()
+                    .product::<Axis>()
+                    .only_const()
+                    .map(|ax| ax as u64)
+                    .unwrap_or(DYN_AX),
+                ShapeInfo::Unranked { .. } => DYN_AX,
+            };
+            let out_type = RankedTensorType::new(&[len], ctx.float_type, None);
+
+            let arg_val = compile_graph
+                .node_weight(deps[0])
+                .context("Argument missing from compile graph")?
+                .1
+                .context("Argument not compiled")?;
+
+            dbg!(&loc, &arg_info, &len, &out_type, &arg_val);
+
+            let shape_val: Value = block
+                .append_operation(arith::constant(
+                    ctx.context,
+                    DenseElementsAttribute::new(
+                        RankedTensorType::new(&[1], ctx.index_type, None).into(),
+                        &[IntegerAttribute::new(ctx.index_type, len as i64).into()],
+                    )?
+                    .into(),
+                    loc,
+                ))
+                .result(0)?
+                .into();
+
+            dbg!(&shape_val);
+
+            let deshape_op = tensor::reshape(ctx.context, out_type.into(), arg_val, shape_val, loc);
+
+            let deshaped_val: Value = block.append_operation(deshape_op.into()).result(0)?.into();
+
+            let zero_val: Value = block
+                .append_operation(arith::constant(
+                    ctx.context,
+                    IntegerAttribute::new(ctx.index_type, 0).into(),
+                    loc,
+                ))
+                .result(0)?
+                .into();
+            let one_val: Value = block
+                .append_operation(arith::constant(
+                    ctx.context,
+                    IntegerAttribute::new(ctx.index_type, 1).into(),
+                    loc,
+                ))
+                .result(0)?
+                .into();
+
+            let len_op = tensor::dim(ctx.context, ctx.index_type, deshaped_val, zero_val, loc);
+            let len_val: Value = block.append_operation(len_op.into()).result(0)?.into();
+
+            let for_op = scf::r#for(
+                zero_val,
+                len_val,
+                one_val,
+                {
+                    let for_block = Block::new(&[(ctx.index_type, loc)]);
+                    let idx_val: Value = for_block.argument(0)?.into();
+                    let get_op =
+                        tensor::extract(ctx.context, ctx.float_type, deshaped_val, &[idx_val], loc);
+                    let cur_val: Value =
+                        for_block.append_operation(get_op.into()).result(0)?.into();
+                    let printf_op = func::call(
+                        ctx.context,
+                        FlatSymbolRefAttribute::new(ctx.context, "print_f64"),
+                        &[cur_val],
+                        &[],
+                        loc,
+                    );
+                    for_block.append_operation(printf_op);
+                    for_block.append_operation(scf::r#yield(&[], loc));
+                    let region = Region::new();
+                    region.append_block(for_block);
+                    region
+                },
+                loc,
+            );
+
+            block.append_operation(for_op);
+
+            return Ok(());
         }
         Data::Node(node) => todo!(),
     };
@@ -270,26 +387,21 @@ fn compile_node<'c, 'a>(
     Ok(())
 }
 
-// fn mk_type<'c>(info: &Info, ctx: CompileContext<'c, '_>) -> Type<'c> {
-
-// }
-
 fn mk_tensor_type<'c>(info: &ShapeInfo, ctx: CompileContext<'c, '_>) -> Type<'c> {
     match info {
         ShapeInfo::Known(value) => {
             let dims = value.shape.iter().map(|len| *len as u64).collect_vec();
-            RankedTensorType::new(&dims, ctx.float_type, None)
+            RankedTensorType::new(&dims, ctx.float_type, None).into()
         }
         ShapeInfo::Ranked(shape) => {
             let dims = shape
                 .iter()
                 .map(|ax| ax.only_const().map(|len| len as u64).unwrap_or(DYN_AX))
                 .collect_vec();
-            RankedTensorType::new(&dims, ctx.float_type, None)
+            RankedTensorType::new(&dims, ctx.float_type, None).into()
         }
         ShapeInfo::Unranked { prefix, suffix } => todo!(),
     }
-    .into()
 }
 
 fn span_to_loc<'c>(span: usize, ctx: CompileContext<'c, '_>) -> Location<'c> {
