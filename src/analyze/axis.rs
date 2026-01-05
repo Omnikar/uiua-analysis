@@ -420,6 +420,7 @@ pub struct Relation {
     pub inv: bool,
 }
 
+#[allow(dead_code)]
 impl Relation {
     /// lhs = rhs
     pub fn eq(lhs: impl Into<Axis>, rhs: impl Into<Axis>) -> Self {
@@ -474,7 +475,9 @@ impl Relation {
             inv: true,
         }
     }
+}
 
+impl Relation {
     /// Returns `None` if the relation involves any variables
     /// Returns `Some(false)` if the relation involves only constants and is trivially false
     /// Returns `Some(true)` if the relation involves only constants and is trivially true

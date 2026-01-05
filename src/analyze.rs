@@ -7,7 +7,7 @@ use petgraph::graph::NodeIndex;
 use petgraph::stable_graph::StableGraph;
 use smallvec::SmallVec;
 use std::collections::HashMap;
-use uiua::{Node, Uiua, Value};
+use uiua::{Node, Purity, Uiua, Value};
 
 use crate::graph::{Data, DataGraph, SmallStack};
 use axis::{Axis, Condition};
@@ -19,7 +19,7 @@ pub struct AnalyzedFunc<'u> {
     pub id: uiua::FunctionId,
     pub graph: DataGraph<'u>,
     pub infos: FuncInfos<'u>,
-    pub span: usize,
+    pub span: Option<usize>,
 }
 
 /// Graphs and analysis results for bound functions
@@ -59,6 +59,7 @@ pub struct FuncInfos<'u> {
     pub subfuncs: Vec<(DataGraph<'u>, Infos)>,
     pub args: SmallVec<[Info; 2]>,
     pub outs: SmallVec<[Info; 1]>,
+    pub purity: Purity,
 }
 
 impl<'u> AnalyzedFunc<'u> {
@@ -66,7 +67,7 @@ impl<'u> AnalyzedFunc<'u> {
         id: uiua::FunctionId,
         graph: DataGraph<'u>,
         infos: FuncInfos<'u>,
-        span: usize,
+        span: Option<usize>,
     ) -> Self {
         Self {
             id,
@@ -313,12 +314,31 @@ pub fn analyze_func_graph<'u>(
         .map(|idx| map.get(idx).unwrap().clone())
         .collect();
 
+    let purity = data_graph
+        .graph
+        .node_weights()
+        .map(|data| match data {
+            Data::Node(node) => {
+                if node.is_pure(&uiua.asm) {
+                    Purity::Pure
+                } else if node.is_min_purity(Purity::Impure, &uiua.asm) {
+                    Purity::Impure
+                } else {
+                    Purity::Mutating
+                }
+            }
+            _ => Purity::Pure,
+        })
+        .min()
+        .unwrap_or(Purity::Pure);
+
     Ok(FuncInfos {
         map,
         reqs,
         subfuncs: funcs,
         args: arg_infos.into(),
         outs,
+        purity,
     })
 }
 
@@ -479,7 +499,7 @@ fn analyze_node<'u>(
                     func.id.clone(),
                     data_graph,
                     func_infos,
-                    *span,
+                    Some(*span),
                 ));
 
                 func_result = ctx.funclib.find(&func.id, &ctx.dep_infos, ctx.nvars);
