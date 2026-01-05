@@ -24,8 +24,8 @@ use std::io::Write;
 use uiua::{Node, Purity};
 
 use crate::{
-    analyze::{self, analyze_func_graph, axis::Axis, AnalyzedFunc, FuncInfos, FuncLib, ShapeInfo},
-    graph::{Data, DataGraph},
+    analyze::{analyze_func_graph, axis::Axis, AnalyzedFunc, FuncInfos, FuncLib, ShapeInfo},
+    graph::{Data, DataGraph, SmallStack},
 };
 
 /// The integer used to indicate a dynamic axis length to MLIR
@@ -45,8 +45,9 @@ struct CompileContext<'c, 'u> {
 //     funcs: Vec<Operation<'c>>,
 // }
 
-type FuncCompileGraph<'c, 'a> =
-    StableGraph<(Data<'a>, Option<Either<Value<'c, 'a>, Vec<Value<'c, 'a>>>>), usize>;
+// Using a `SmallVec` causes lifetime issues for some reason
+type FuncCompileGraph<'c, 'a, 'u> =
+    StableGraph<(Data<'u>, Option<Vec<Value<'c, 'a>>>), (usize, usize)>;
 
 pub fn compile_test(uiua: &uiua::Uiua) -> Result<()> {
     let registry = DialectRegistry::new();
@@ -80,9 +81,9 @@ pub fn compile_test(uiua: &uiua::Uiua) -> Result<()> {
 
     let func_id = uiua::FunctionId::Named("main".into());
     let span = uiua.asm.root.span();
-    funclib.funcs.push(crate::analyze::AnalyzedFunc::new(
-        func_id, data_graph, infos, span,
-    ));
+    funclib
+        .funcs
+        .push(AnalyzedFunc::new(func_id, data_graph, infos, span));
 
     for i in 0..funclib.funcs.len() {
         let func = compile_func(&funclib, i, ctx)?;
@@ -164,12 +165,7 @@ fn compile_func<'c>(
         func.graph
             .stack
             .iter()
-            .map(|&idx| {
-                compile_graph
-                    .node_weight(idx)
-                    .and_then(|(_, v)| v.as_ref().and_then(|v| v.as_ref().left()))
-                    .copied()
-            })
+            .map(|&(idx, out_i)| Some(compile_graph.node_weight(idx)?.1.as_ref()?[out_i]))
             .collect::<Option<Vec<_>>>()
             .context("Did not compile required node")?
     } else {
@@ -206,13 +202,13 @@ fn compile_func<'c>(
     ))
 }
 
-fn compile_node<'c, 'a>(
+fn compile_node<'c, 'a, 'u>(
     idx: NodeIndex,
     block: &'a Block<'c>,
-    compile_graph: &mut FuncCompileGraph<'c, 'a>,
-    infos: &FuncInfos,
-    funclib: &FuncLib,
-    ctx: CompileContext<'c, '_>,
+    compile_graph: &mut FuncCompileGraph<'c, 'a, 'u>,
+    infos: &FuncInfos<'u>,
+    funclib: &FuncLib<'u>,
+    ctx: CompileContext<'c, 'u>,
 ) -> Result<()> {
     if compile_graph.node_weight(idx).unwrap().1.is_some() {
         // This node has already been compiled
@@ -221,12 +217,13 @@ fn compile_node<'c, 'a>(
 
     let deps = compile_graph.neighbors(idx);
     let dep_edges = compile_graph.edges(idx);
-    let (deps, _dep_edges): (Vec<_>, Vec<usize>) = deps
-        .zip(dep_edges.map(|e| e.weight()))
-        .sorted_by_key(|(_, e)| *e)
-        .unzip();
+    let deps: SmallStack = deps
+        .zip(dep_edges.map(|e| *e.weight()))
+        .sorted_by_key(|(_, (_, in_i))| *in_i)
+        .map(|(idx, (out_i, _))| (idx, out_i))
+        .collect();
 
-    for &dep in &deps {
+    for &(dep, _) in &deps {
         compile_node(dep, block, compile_graph, infos, funclib, ctx)?;
     }
 
@@ -237,57 +234,74 @@ fn compile_node<'c, 'a>(
         .0;
     dbg!(&data);
     let value = match data {
-        Data::Arg(i) => Either::Left(block.argument(i)?.into()),
-        Data::Out => todo!(),
-        Data::Node(Node::Push(value)) => Either::Left(constant(value, block, ctx)?),
+        Data::Arg(i) => vec![block.argument(i)?.into()],
+        Data::Node(Node::Push(value)) => vec![constant(value, block, ctx)?],
         Data::Node(Node::Call(_func, span)) => {
             let loc = span_to_loc(*span, ctx);
-            let analyzed_func = &funclib.funcs[infos.map.get(&idx).unwrap().subfunc_idxs[0]];
+            let node_info = infos.map.get(&idx).expect("Did not analyze output");
+            let analyzed_func = &funclib.funcs[node_info.subfunc_idxs[0]];
             let func_name = name_mangle(analyzed_func)?;
             let ref_attr = FlatSymbolRefAttribute::new(ctx.context, &func_name);
             let args = deps
                 .iter()
-                .map(|&idx| {
+                .map(|&(idx, out_i)| {
                     compile_graph
                         .node_weight(idx)
-                        .and_then(|(_, v)| v.as_ref().and_then(|v| v.as_ref().left()))
-                        .copied()
+                        .and_then(|(_, v)| v.as_ref()?.get(out_i).copied())
                 })
                 .collect::<Option<Vec<_>>>()
                 .expect("Argument missing from compile graph");
-            let out_info = infos.map.get(&idx).context("Did not analyze output")?;
-            let elem_type = match out_info.typ {
-                0 => ctx.float_type,
-                1 => ctx.char_type,
-                _ => unimplemented!(),
-            };
-            let out_type = mk_tensor_type(&out_info.shape, elem_type);
-            let op = func::call(ctx.context, ref_attr, &args, &[out_type], loc);
-            Either::Left(block.append_operation(op).result(0)?.into())
+
+            let out_types = node_info
+                .vals
+                .iter()
+                .map(|out_info| {
+                    let elem_type = match out_info.typ {
+                        0 => ctx.float_type,
+                        1 => ctx.char_type,
+                        _ => unimplemented!(),
+                    };
+                    mk_tensor_type(&out_info.shape, elem_type)
+                })
+                .collect_vec();
+
+            let op = func::call(ctx.context, ref_attr, &args, &out_types, loc);
+            let op_ref = block.append_operation(op);
+            (0..out_types.len())
+                .map(|i| op_ref.result(i).map(Into::into).map_err(Into::into))
+                .collect::<Result<_>>()?
         }
         Data::Node(Node::Prim(Add, span)) => {
-            let lhs = deps[0];
-            let rhs = deps[1];
-            let lhs_info = infos.map.get(&lhs).expect("Did not analyze argument");
-            let rhs_info = infos.map.get(&rhs).expect("Did not analyze argument");
-            let out_info = infos.map.get(&idx).expect("Did not analyze output");
+            let (lhs_idx, lhs_out_i) = deps[0];
+            let (rhs_idx, rhs_out_i) = deps[1];
+            let lhs_info = &infos
+                .map
+                .get(&lhs_idx)
+                .expect("Did not analyze argument")
+                .vals[lhs_out_i];
+            let rhs_info = &infos
+                .map
+                .get(&rhs_idx)
+                .expect("Did not analyze argument")
+                .vals[rhs_out_i];
+            let out_info = &infos.map.get(&idx).expect("Did not analyze output").vals[0];
             if lhs_info.typ != 0 || rhs_info.typ != 0 {
                 bail!("Addition is currently only implemented for numbers");
             }
 
             let lhs_val = *compile_graph
-                .node_weight(lhs)
+                .node_weight(lhs_idx)
                 .expect("Argument missing from compile graph")
                 .1
                 .as_ref()
-                .and_then(|v| v.as_ref().left())
+                .and_then(|v| v.get(lhs_out_i))
                 .expect("Argument not compiled");
             let rhs_val = *compile_graph
-                .node_weight(rhs)
+                .node_weight(rhs_idx)
                 .expect("Argument missing from compile graph")
                 .1
                 .as_ref()
-                .and_then(|v| v.as_ref().left())
+                .and_then(|v| v.get(rhs_out_i))
                 .expect("Argument not compiled");
 
             let out_type = mk_tensor_type(&out_info.shape, ctx.float_type);
@@ -299,11 +313,16 @@ fn compile_node<'c, 'a>(
                 .input_2(rhs_val)
                 .output(out_type)
                 .build();
-            Either::Left(block.append_operation(op.into()).result(0)?.into())
+            vec![block.append_operation(op.into()).result(0)?.into()]
         }
         Data::Node(Node::Prim(Sys(uiua::SysOp::Print), span)) => {
             let loc = span_to_loc(*span, ctx);
-            let arg_info = infos.map.get(&deps[0]).expect("Did not analyze argument");
+            let (arg_idx, arg_out_i) = deps[0];
+            let arg_info = &infos
+                .map
+                .get(&arg_idx)
+                .expect("Did not analyze argument")
+                .vals[arg_out_i];
             let (elem_type, print_func) = match arg_info.typ {
                 0 => (ctx.float_type, "print_f64"),
                 1 => (ctx.char_type, "print_i32"),
@@ -322,11 +341,11 @@ fn compile_node<'c, 'a>(
             let out_type = RankedTensorType::new(&[len], elem_type, None);
 
             let arg_val = *compile_graph
-                .node_weight(deps[0])
+                .node_weight(arg_idx)
                 .expect("Argument missing from compile graph")
                 .1
                 .as_ref()
-                .and_then(|v| v.as_ref().left())
+                .and_then(|v| v.get(arg_out_i))
                 .expect("Argument not compiled");
 
             let flat_shape_val: Value = block
@@ -405,32 +424,40 @@ fn compile_node<'c, 'a>(
             );
             block.append_operation(final_print_op);
 
-            Either::Right(Vec::with_capacity(0))
+            vec![]
         }
         Data::Node(Node::Mod(Rows, _funcs, span)) => {
             let loc = span_to_loc(*span, ctx);
 
-            let lhs = deps[0];
-            let rhs = deps[1];
-            let lhs_info = infos.map.get(&lhs).expect("Did not analyze argument");
-            let rhs_info = infos.map.get(&rhs).expect("Did not analyze argument");
-            let out_info = infos.map.get(&idx).expect("Did not analyze output");
+            let (lhs_idx, lhs_out_i) = deps[0];
+            let (rhs_idx, rhs_out_i) = deps[1];
+            let lhs_info = &infos
+                .map
+                .get(&lhs_idx)
+                .expect("Did not analyze argument")
+                .vals[lhs_out_i];
+            let rhs_info = &infos
+                .map
+                .get(&rhs_idx)
+                .expect("Did not analyze argument")
+                .vals[rhs_out_i];
+            // let out_info = infos.map.get(&idx).expect("Did not analyze output");
 
-            let out_elem_type = match out_info.typ {
-                0 => ctx.float_type,
-                1 => ctx.char_type,
-                _ => unimplemented!(),
-            };
-            let out_type = mk_tensor_type(&out_info.shape, out_elem_type);
+            // let out_elem_type = match out_info.typ {
+            //     0 => ctx.float_type,
+            //     1 => ctx.char_type,
+            //     _ => unimplemented!(),
+            // };
+            // let out_type = mk_tensor_type(&out_info.shape, out_elem_type);
 
-            let (subfunc_graph, subfunc_infos) = &infos.subfuncs[out_info.subfunc_idxs[0]];
+            // let (subfunc_graph, subfunc_infos) = &infos.subfuncs[out_info.subfunc_idxs[0]];
 
-            // ---
+            // // ---
 
-            let mut compile_graph: FuncCompileGraph =
-                subfunc_graph.graph.map(|_, &data| (data, None), |_, &x| x);
+            // let mut compile_graph: FuncCompileGraph =
+            //     subfunc_graph.graph.map(|_, &data| (data, None), |_, &x| x);
 
-            // ---
+            // // ---
 
             todo!()
         }

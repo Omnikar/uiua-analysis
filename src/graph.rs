@@ -4,13 +4,13 @@ use smallvec::SmallVec;
 use std::collections::HashSet;
 use uiua::{Assembly, ImplPrimitive, Node, Primitive};
 
-pub type Stack = SmallVec<[NodeIndex; 16]>;
-pub type SmallStack = SmallVec<[NodeIndex; 4]>;
+pub type Stack = SmallVec<[(NodeIndex, usize); 16]>;
+pub type SmallStack = SmallVec<[(NodeIndex, usize); 4]>;
 
 /// A graph structure used to represent the tacit flow of data through a program
 #[derive(Default, Debug, Clone)]
 pub struct DataGraph<'u> {
-    pub graph: StableGraph<Data<'u>, usize>,
+    pub graph: StableGraph<Data<'u>, (usize, usize)>,
     pub stack: Stack,
     pub under_stack: Stack,
     pub arg_count: usize,
@@ -23,8 +23,6 @@ pub enum Data<'u> {
     Node(&'u Node),
     /// An argument to the function represented by the full graph
     Arg(usize),
-    /// A single output from a multi-output `Data` instance
-    Out,
 }
 
 impl<'u> DataGraph<'u> {
@@ -39,18 +37,18 @@ impl<'u> DataGraph<'u> {
     pub fn extend_args(&mut self, min_args: usize) {
         for _ in 0..min_args.saturating_sub(self.stack.len()) {
             self.stack
-                .insert(0, self.graph.add_node(Data::Arg(self.arg_count)));
+                .insert(0, (self.graph.add_node(Data::Arg(self.arg_count)), 0));
             self.arg_count += 1;
         }
     }
 
     /// Checked pop of the top stack value
-    fn stack_pop(&mut self) -> Result<NodeIndex> {
+    fn stack_pop(&mut self) -> Result<(NodeIndex, usize)> {
         self.stack.pop().context("Inferred too few arguments")
     }
 
     /// Checked read of the top stack value
-    fn stack_top(&self) -> Result<NodeIndex> {
+    fn stack_top(&self) -> Result<(NodeIndex, usize)> {
         self.stack
             .last()
             .copied()
@@ -58,7 +56,7 @@ impl<'u> DataGraph<'u> {
     }
 
     /// Checked read of the nth stack value
-    fn stack_n(&self, n: usize) -> Result<NodeIndex> {
+    fn stack_n(&self, n: usize) -> Result<(NodeIndex, usize)> {
         Ok(self.stack[self
             .stack
             .len()
@@ -213,22 +211,17 @@ impl<'u> DataGraph<'u> {
             // This is the branch that actually creates the main nodes, connecting each one to the appropriate number of inputs from the stack
             node => {
                 let new = self.graph.add_node(Data::Node(node));
-                for (i, arg) in drain_args(&mut self.stack, sig.args()).rev().enumerate() {
-                    // Each edge is given a weight equal to the index of the node it points at in the arguments of the node that depends on it.
-                    // So a `Sub` node will have two arrows pointing out of it, the 0 arrow corresponding to the left argument, and the 1 arrow to the right argument.
-                    self.graph.add_edge(new, arg, i);
+                for (in_i, (arg, out_i)) in
+                    drain_args(&mut self.stack, sig.args()).rev().enumerate()
+                {
+                    // Each edge is given a weight consisting of a tuple of two numbers. The first number indicates which output from the depended-upon node is being used, and the second number indicates which input for the dependent node it is used for.
+                    // So a `Sub` node will have two arrows pointing out of it, one arrow will have weight (_, 0), corresponding to the left argument, and the other arrow will have weight (_, 1), corresponding to the right argument.
+                    // As another example, consider an `UnKeep` node. An arrow pointing toward it with weight (0, _) indicates that something is using the run-length output, whereas an arrow pointing toward it with weight (1, _) indicates that something is using the adjacent-deduplicated output.
+                    self.graph.add_edge(new, arg, (out_i, in_i));
                 }
 
-                if sig.outputs() == 1 {
-                    self.stack.push(new);
-                } else {
-                    // For multi-output functions, an `Out` node is added for each output of the function, and the weights of the edges going from the `Out` node to the node for the function are used to indicate which output of the function each node represents.
-                    // For instance, an `UnKeep` node will have two `Out` nodes pointing to it. The one with a 0 edge corresponds to the run lengths, and the one with a 1 edge corresponds to the adjacent-deduplication.
-                    for i in (0..sig.outputs()).rev() {
-                        let out = self.graph.add_node(Data::Out);
-                        self.graph.add_edge(out, new, i);
-                        self.stack.push(out);
-                    }
+                for out_i in (0..sig.outputs()).rev() {
+                    self.stack.push((new, out_i));
                 }
             }
         }
@@ -250,7 +243,8 @@ impl<'u> DataGraph<'u> {
                 }
             })
             .collect();
-        roots.extend_from_slice(&self.stack);
+        // NOTE: This might contain duplicates. Is this a problem?
+        roots.extend(self.stack.iter().map(|(idx, _)| *idx));
         roots
     }
 
@@ -271,17 +265,20 @@ impl<'u> DataGraph<'u> {
 }
 
 /// Draining iterator over the top `num_args` items in push-order
-fn drain_args(stack: &mut Stack, num_args: usize) -> impl DoubleEndedIterator<Item = NodeIndex> {
+fn drain_args(
+    stack: &mut Stack,
+    num_args: usize,
+) -> impl DoubleEndedIterator<Item = (NodeIndex, usize)> {
     stack.drain(stack.len() - num_args..)
 }
 
 /// Slice of the top `num_args` items in push-order
-fn args(stack: &[NodeIndex], num_args: usize) -> &[NodeIndex] {
+fn args(stack: &[(NodeIndex, usize)], num_args: usize) -> &[(NodeIndex, usize)] {
     &stack[stack.len() - num_args..]
 }
 
 /// Slice of the top `num_args` items in push-order
-fn args_mut(stack: &mut [NodeIndex], num_args: usize) -> &mut [NodeIndex] {
+fn args_mut(stack: &mut [(NodeIndex, usize)], num_args: usize) -> &mut [(NodeIndex, usize)] {
     let len = stack.len();
     &mut stack[len - num_args..]
 }

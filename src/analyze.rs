@@ -2,10 +2,10 @@ pub mod axis;
 pub mod impls;
 
 use anyhow::{bail, Context, Result};
-use itertools::{Either, Itertools};
+use itertools::Itertools;
 use petgraph::graph::NodeIndex;
 use petgraph::stable_graph::StableGraph;
-use smallvec::SmallVec;
+use smallvec::{smallvec, SmallVec};
 use std::collections::HashMap;
 use uiua::{Node, Purity, Uiua, Value};
 
@@ -42,23 +42,30 @@ pub enum ShapeInfo {
 
 /// Statically-inferred information about data flowing through a program
 #[derive(Clone, Debug)]
-pub struct Info {
+pub struct ValInfo {
     pub typ: u8,
     pub shape: ShapeInfo,
+}
+
+/// Statically-inferred information about a particular node of a program
+#[derive(Clone, Debug)]
+pub struct NodeInfo {
+    /// Info about each value output by this node
+    pub vals: SmallVec<[ValInfo; 1]>,
     /// For functions that needed to be analyzed for this node
     pub subfunc_idxs: SmallVec<[usize; 2]>,
 }
 
-pub type Infos = HashMap<NodeIndex, Info>;
-type WorkingInfoGraph<'u> = StableGraph<(Data<'u>, Option<Either<Info, Vec<Info>>>), usize>;
+pub type InfoMap = HashMap<NodeIndex, NodeInfo>;
+type WorkingInfoGraph<'u> = StableGraph<(Data<'u>, Option<NodeInfo>), (usize, usize)>;
 
 #[derive(Clone, Debug)]
 pub struct FuncInfos<'u> {
-    pub map: Infos,
+    pub map: InfoMap,
     pub reqs: Vec<Condition>,
-    pub subfuncs: Vec<(DataGraph<'u>, Infos)>,
-    pub args: SmallVec<[Info; 2]>,
-    pub outs: SmallVec<[Info; 1]>,
+    pub subfuncs: Vec<(DataGraph<'u>, InfoMap)>,
+    pub args: SmallVec<[ValInfo; 2]>,
+    pub outs: SmallVec<[ValInfo; 1]>,
     pub purity: Purity,
 }
 
@@ -87,9 +94,9 @@ impl<'u> FuncLib<'u> {
     pub fn find(
         &self,
         id: &uiua::FunctionId,
-        arg_infos: &[Info],
+        arg_infos: &[ValInfo],
         nvars: &mut usize,
-    ) -> Option<(usize, Result<Either<Info, Vec<Info>>>)> {
+    ) -> Option<(usize, Result<NodeInfo>)> {
         self.funcs
             .iter()
             .enumerate()
@@ -105,10 +112,10 @@ impl<'u> FuncLib<'u> {
 /// If the arguments match but do not satisfy the reqs, returns `Some(Err(…))`
 /// Otherwise, returns `Some(Ok(…))` with the inferred outputs
 fn try_match_func(
-    arg_infos: &[Info],
+    arg_infos: &[ValInfo],
     func_infos: &FuncInfos,
     nvars: &mut usize,
-) -> Option<Result<Either<Info, Vec<Info>>>> {
+) -> Option<Result<NodeInfo>> {
     // dbg!(arg_infos, func_infos);
     // Axis variable substitutions to be made
     let mut substs = HashMap::new();
@@ -191,29 +198,50 @@ fn try_match_func(
             }
         }
 
-        let mut outs = func_infos
-            .outs
-            .iter()
-            .map(|out_info| {
-                out_info
-                    .shape
-                    .substitute(&substs)
-                    .map(|shape| Info::new(out_info.typ, shape))
-            })
-            .collect::<Result<Vec<_>>>()?;
+        let outs = func_infos.outs.iter().map(|out_info| {
+            out_info
+                .shape
+                .substitute(&substs)
+                .map(|shape| ValInfo::new(out_info.typ, shape))
+        });
 
-        Ok(match outs.len() {
-            1 => Either::Left(outs.pop().unwrap()),
-            _ => Either::Right(outs),
-        })
+        NodeInfo::try_many_vals(outs)
     })())
 }
 
-impl Info {
+impl ValInfo {
     pub fn new(typ: u8, shape: ShapeInfo) -> Self {
+        Self { typ, shape }
+    }
+}
+
+impl NodeInfo {
+    pub fn one_val(val_info: ValInfo) -> Self {
         Self {
-            typ,
-            shape,
+            vals: smallvec![val_info],
+            subfunc_idxs: SmallVec::new(),
+        }
+    }
+
+    pub fn many_vals(val_infos: impl Iterator<Item = ValInfo>) -> Self {
+        Self {
+            vals: val_infos.collect(),
+            subfunc_idxs: SmallVec::new(),
+        }
+    }
+
+    pub fn try_many_vals<E>(
+        val_infos: impl Iterator<Item = Result<ValInfo, E>>,
+    ) -> Result<Self, E> {
+        val_infos.collect::<Result<_, _>>().map(|val_infos| Self {
+            vals: val_infos,
+            subfunc_idxs: SmallVec::new(),
+        })
+    }
+
+    pub fn no_vals() -> Self {
+        Self {
+            vals: SmallVec::new(),
             subfunc_idxs: SmallVec::new(),
         }
     }
@@ -221,6 +249,11 @@ impl Info {
     pub fn func(mut self, i: usize) -> Self {
         self.subfunc_idxs.push(i);
         self
+    }
+}
+impl FromIterator<ValInfo> for NodeInfo {
+    fn from_iter<T: IntoIterator<Item = ValInfo>>(iter: T) -> Self {
+        Self::many_vals(iter.into_iter())
     }
 }
 
@@ -282,7 +315,7 @@ impl ShapeInfo {
 
 pub fn analyze_func_graph<'u>(
     data_graph: &DataGraph<'u>,
-    arg_infos: &[Info],
+    arg_infos: &[ValInfo],
     funclib: &mut FuncLib<'u>,
     uiua: &'u Uiua,
 ) -> Result<FuncInfos<'u>> {
@@ -311,7 +344,7 @@ pub fn analyze_func_graph<'u>(
     let outs = data_graph
         .stack
         .iter()
-        .map(|idx| map.get(idx).unwrap().clone())
+        .map(|&(idx, out_i)| map.get(&idx).unwrap().vals[out_i].clone())
         .collect();
 
     let purity = data_graph
@@ -344,13 +377,13 @@ pub fn analyze_func_graph<'u>(
 
 pub fn analyze_subgraph<'u>(
     data_graph: &DataGraph<'u>,
-    arg_infos: &[Info],
+    arg_infos: &[ValInfo],
     nvars: &mut usize,
     reqs: &mut Vec<Condition>,
-    subfuncs: &mut Vec<(DataGraph<'u>, Infos)>,
+    subfuncs: &mut Vec<(DataGraph<'u>, InfoMap)>,
     funclib: &mut FuncLib<'u>,
     uiua: &'u Uiua,
-) -> Result<Infos> {
+) -> Result<InfoMap> {
     let roots = data_graph.roots(&uiua.asm);
 
     let mut info_graph = data_graph.graph.map(|_, &data| (data, None), |_, &x| x);
@@ -379,15 +412,7 @@ pub fn analyze_subgraph<'u>(
     let indices = info_graph.node_indices().collect_vec();
     let map = indices
         .into_iter()
-        .filter_map(|idx| {
-            info_graph
-                .remove_node(idx)
-                .unwrap()
-                .1
-                .unwrap()
-                .left()
-                .map(|info| (idx, info))
-        })
+        .map(|idx| (idx, info_graph.remove_node(idx).unwrap().1.unwrap()))
         .collect();
     Ok(map)
 }
@@ -397,10 +422,10 @@ fn analyze_node<'u>(
     info_graph: &mut WorkingInfoGraph<'u>,
     nvars: &mut usize,
     reqs: &mut Vec<Condition>,
-    subfuncs: &mut Vec<(DataGraph<'u>, Infos)>,
+    subfuncs: &mut Vec<(DataGraph<'u>, InfoMap)>,
     funclib: &mut FuncLib<'u>,
     idx: NodeIndex,
-    arg_infos: &[Info],
+    arg_infos: &[ValInfo],
     uiua: &'u Uiua,
 ) -> Result<()> {
     // Short circuit if this node has been analyzed already
@@ -417,32 +442,26 @@ fn analyze_node<'u>(
     let deps = info_graph.neighbors(idx);
     let dep_edges = info_graph.edges(idx);
     // Sort deps using the edge weights so that they are in the correct argument order
-    let (deps, dep_edges): (SmallStack, SmallVec<[usize; 4]>) = deps
+    let deps: SmallStack = deps
         .zip(dep_edges.map(|e| *e.weight()))
-        .sorted_by_key(|(_, e)| *e)
-        .unzip();
+        .sorted_by_key(|(_, (_, in_i))| *in_i)
+        .map(|(idx, (out_i, _))| (idx, out_i))
+        .collect();
 
-    // List of `Info`s corresponding to the dependencies
+    // List of `ValInfo`s corresponding to the dependencies
     let mut dep_infos = Vec::new();
-    for &dep in &deps {
+    for &(dep, dep_out_i) in &deps {
         analyze_node(
             info_graph, nvars, reqs, subfuncs, funclib, dep, arg_infos, uiua,
         )?;
-        let info = match info_graph
+        let info = info_graph
             .node_weight(dep)
             .unwrap()
             .1
-            .clone()
+            .as_ref()
             .context("Analysis did not complete")?
-        {
-            Either::Left(info) => info,
-            // Separately handle `Out` nodes which are the only nodes to be connected to multi-output nodes
-            Either::Right(infos) => {
-                info_graph.node_weight_mut(idx).unwrap().1 =
-                    Some(Either::Left(infos[dep_edges[0]].clone()));
-                return Ok(());
-            }
-        };
+            .vals[dep_out_i]
+            .clone();
         dep_infos.push(info);
     }
 
@@ -458,13 +477,14 @@ fn analyze_node<'u>(
         uiua,
     };
     use uiua::{ImplPrimitive::*, Primitive::*};
-    use Either::*;
     let info = match data {
-        Data::Arg(i) => Left(arg_infos.get(i).context("Insufficient arg info")?.clone()),
-        Data::Out => bail!("`Out` node not handled"),
-        Data::Node(Node::Push(val)) => Left(Info::new(typ(val), ShapeInfo::Known(val.clone()))),
+        Data::Arg(i) => {
+            NodeInfo::one_val(arg_infos.get(i).context("Insufficient arg info")?.clone())
+        }
+        Data::Node(Node::Push(val)) => {
+            NodeInfo::one_val(ValInfo::new(typ(val), ShapeInfo::Known(val.clone())))
+        }
         Data::Node(Node::Call(func, span)) => {
-            // dbg!(&ctx.dep_infos);
             let mut func_result = ctx.funclib.find(&func.id, &ctx.dep_infos, ctx.nvars);
             if func_result.is_none() {
                 let node = &ctx.uiua.asm[func];
@@ -507,79 +527,73 @@ fn analyze_node<'u>(
 
             let (func_i, out_result) = func_result.context("Failed to analyze called function")?;
             let mut out_info = out_result?;
-            match &mut out_info {
-                Left(info) => info.subfunc_idxs.push(func_i),
-                Right(infos) => {
-                    for info in infos {
-                        info.subfunc_idxs.push(func_i);
-                    }
-                }
-            }
+            out_info.subfunc_idxs.push(func_i);
+
             out_info
         }
 
         // -- Monadic Pervasive Functions --
-        Data::Node(Node::Prim(Not, _span)) => Left(impls::not(ctx)?),
-        Data::Node(Node::Prim(Sign, _span)) => Left(impls::sign(ctx)?),
-        Data::Node(Node::Prim(Neg, _span)) => Left(impls::neg(ctx)?),
-        Data::Node(Node::Prim(Reciprocal, _span)) => Left(impls::reciprocal(ctx)?),
-        Data::Node(Node::Prim(Abs, _span)) => Left(impls::abs(ctx)?),
-        Data::Node(Node::Prim(Sqrt, _span)) => Left(impls::sqrt(ctx)?),
-        Data::Node(Node::Prim(Exp, _span)) => Left(impls::exp(ctx)?),
-        Data::Node(Node::Prim(Sin, _span)) => Left(impls::sin(ctx)?),
-        Data::Node(Node::Prim(Floor, _span)) => Left(impls::floor(ctx)?),
-        Data::Node(Node::Prim(Ceil, _span)) => Left(impls::ceil(ctx)?),
-        Data::Node(Node::Prim(Round, _span)) => Left(impls::round(ctx)?),
+        Data::Node(Node::Prim(Not, _span)) => impls::not(ctx)?,
+        Data::Node(Node::Prim(Sign, _span)) => impls::sign(ctx)?,
+        Data::Node(Node::Prim(Neg, _span)) => impls::neg(ctx)?,
+        Data::Node(Node::Prim(Reciprocal, _span)) => impls::reciprocal(ctx)?,
+        Data::Node(Node::Prim(Abs, _span)) => impls::abs(ctx)?,
+        Data::Node(Node::Prim(Sqrt, _span)) => impls::sqrt(ctx)?,
+        Data::Node(Node::Prim(Exp, _span)) => impls::exp(ctx)?,
+        Data::Node(Node::Prim(Sin, _span)) => impls::sin(ctx)?,
+        Data::Node(Node::Prim(Floor, _span)) => impls::floor(ctx)?,
+        Data::Node(Node::Prim(Ceil, _span)) => impls::ceil(ctx)?,
+        Data::Node(Node::Prim(Round, _span)) => impls::round(ctx)?,
 
         // -- Dyadic Pervasive Functions --
-        Data::Node(Node::Prim(Eq, _span)) => Left(impls::eq(ctx)?),
-        Data::Node(Node::Prim(Ne, _span)) => Left(impls::ne(ctx)?),
-        Data::Node(Node::Prim(Lt, _span)) => Left(impls::lt(ctx)?),
-        Data::Node(Node::Prim(Le, _span)) => Left(impls::le(ctx)?),
-        Data::Node(Node::Prim(Gt, _span)) => Left(impls::gt(ctx)?),
-        Data::Node(Node::Prim(Ge, _span)) => Left(impls::ge(ctx)?),
-        Data::Node(Node::Prim(Add, _span)) => Left(impls::add(ctx)?),
-        Data::Node(Node::Prim(Sub, _span)) => Left(impls::sub(ctx)?),
-        Data::Node(Node::Prim(Mul, _span)) => Left(impls::mul(ctx)?),
-        Data::Node(Node::Prim(Div, _span)) => Left(impls::div(ctx)?),
+        Data::Node(Node::Prim(Eq, _span)) => impls::eq(ctx)?,
+        Data::Node(Node::Prim(Ne, _span)) => impls::ne(ctx)?,
+        Data::Node(Node::Prim(Lt, _span)) => impls::lt(ctx)?,
+        Data::Node(Node::Prim(Le, _span)) => impls::le(ctx)?,
+        Data::Node(Node::Prim(Gt, _span)) => impls::gt(ctx)?,
+        Data::Node(Node::Prim(Ge, _span)) => impls::ge(ctx)?,
+        Data::Node(Node::Prim(Add, _span)) => impls::add(ctx)?,
+        Data::Node(Node::Prim(Sub, _span)) => impls::sub(ctx)?,
+        Data::Node(Node::Prim(Mul, _span)) => impls::mul(ctx)?,
+        Data::Node(Node::Prim(Div, _span)) => impls::div(ctx)?,
 
         // -- Monadic Array Functions --
-        Data::Node(Node::Prim(Len, _span)) => Left(impls::len(ctx)?),
-        Data::Node(Node::Prim(Shape, _span)) => Left(impls::shape(ctx)?),
-        Data::Node(Node::Prim(Range, _span)) => Left(impls::range(ctx)?),
-        Data::Node(Node::Prim(First, _span)) => Left(impls::first(ctx)?),
-        Data::Node(Node::Prim(Last, _span)) => Left(impls::last(ctx)?),
-        Data::Node(Node::Prim(Reverse, _span)) => Left(impls::reverse(ctx)?),
-        Data::Node(Node::Prim(Deshape, _span)) => Left(impls::deshape(ctx)?),
-        Data::Node(Node::ImplPrim(DeshapeSub(sub), _span)) => Left(impls::deshape_sub(*sub, ctx)?),
-        Data::Node(Node::Prim(Fix, _span)) => Left(impls::fix(ctx)?),
-        Data::Node(Node::Prim(Bits, _span)) => Left(impls::bits(ctx)?),
-        Data::Node(Node::Prim(Transpose, _span)) => Left(impls::transpose(ctx)?),
-        Data::Node(Node::ImplPrim(TransposeN(n), _span)) => Left(impls::transpose_n(*n, ctx)?),
-        Data::Node(Node::Prim(Sort, _span)) => Left(impls::sort(ctx)?),
-        Data::Node(Node::ImplPrim(SortDown, _span)) => Left(impls::sort_down(ctx)?),
-        Data::Node(Node::Prim(Rise, _span)) => Left(impls::rise(ctx)?),
-        Data::Node(Node::Prim(Fall, _span)) => Left(impls::fall(ctx)?),
-        Data::Node(Node::Prim(Where, _span)) => Left(impls::r#where(ctx)?),
-        Data::Node(Node::Prim(Deduplicate, _span)) => Left(impls::deduplicate(ctx)?),
-        Data::Node(Node::Prim(Classify, _span)) => Left(impls::classify(ctx)?),
-        Data::Node(Node::Prim(Occurrences, _span)) => Left(impls::occurrences(ctx)?),
-        Data::Node(Node::Prim(Box, _span)) => Left(impls::r#box(ctx)?),
+        Data::Node(Node::Prim(Len, _span)) => impls::len(ctx)?,
+        Data::Node(Node::Prim(Shape, _span)) => impls::shape(ctx)?,
+        Data::Node(Node::Prim(Range, _span)) => impls::range(ctx)?,
+        Data::Node(Node::Prim(First, _span)) => impls::first(ctx)?,
+        Data::Node(Node::Prim(Last, _span)) => impls::last(ctx)?,
+        Data::Node(Node::Prim(Reverse, _span)) => impls::reverse(ctx)?,
+        Data::Node(Node::Prim(Deshape, _span)) => impls::deshape(ctx)?,
+        Data::Node(Node::ImplPrim(DeshapeSub(sub), _span)) => impls::deshape_sub(*sub, ctx)?,
+        Data::Node(Node::Prim(Fix, _span)) => impls::fix(ctx)?,
+        Data::Node(Node::Prim(Bits, _span)) => impls::bits(ctx)?,
+        Data::Node(Node::Prim(Transpose, _span)) => impls::transpose(ctx)?,
+        Data::Node(Node::ImplPrim(TransposeN(n), _span)) => impls::transpose_n(*n, ctx)?,
+        Data::Node(Node::Prim(Sort, _span)) => impls::sort(ctx)?,
+        Data::Node(Node::ImplPrim(SortDown, _span)) => impls::sort_down(ctx)?,
+        Data::Node(Node::Prim(Rise, _span)) => impls::rise(ctx)?,
+        Data::Node(Node::Prim(Fall, _span)) => impls::fall(ctx)?,
+        Data::Node(Node::Prim(Where, _span)) => impls::r#where(ctx)?,
+        Data::Node(Node::Prim(Deduplicate, _span)) => impls::deduplicate(ctx)?,
+        Data::Node(Node::Prim(Classify, _span)) => impls::classify(ctx)?,
+        Data::Node(Node::Prim(Occurrences, _span)) => impls::occurrences(ctx)?,
+        Data::Node(Node::Prim(Box, _span)) => impls::r#box(ctx)?,
 
         // -- Dyadic Array Functions --
 
         // -- Misc Functions --
-        Data::Node(Node::Prim(Rand, _span)) => Left(impls::rand(ctx)?),
+        Data::Node(Node::Prim(Rand, _span)) => impls::rand(ctx)?,
 
         // -- _________ Modifiers --
         Data::Node(Node::Mod(Rows, funcs, _span)) => impls::rows(funcs, ctx)?,
         Data::Node(Node::Mod(Table, funcs, _span)) => impls::table(funcs, ctx)?,
 
         // -- Iterating Modifiers --
-        Data::Node(Node::Mod(Reduce, funcs, _span)) => Left(impls::reduce(funcs, ctx)?),
+        Data::Node(Node::Mod(Reduce, funcs, _span)) => impls::reduce(funcs, ctx)?,
 
         // -- Not yet categorized --
-        Data::Node(Node::Prim(Sys(uiua::SysOp::Print), _span)) => Right(Vec::new()),
+        Data::Node(Node::Prim(Sys(uiua::SysOp::Print), _span)) => NodeInfo::no_vals(),
 
         _ => todo!(),
     };
