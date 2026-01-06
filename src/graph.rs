@@ -4,8 +4,7 @@ use smallvec::SmallVec;
 use std::collections::HashSet;
 use uiua::{Assembly, ImplPrimitive, Node, Primitive};
 
-pub type Stack = SmallVec<[(NodeIndex, usize); 16]>;
-pub type SmallStack = SmallVec<[(NodeIndex, usize); 4]>;
+pub type Stack = SmallVec<[(NodeIndex, usize); 4]>;
 
 /// A graph structure used to represent the tacit flow of data through a program
 #[derive(Default, Debug, Clone)]

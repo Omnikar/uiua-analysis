@@ -9,11 +9,11 @@ use smallvec::{smallvec, SmallVec};
 use std::collections::HashMap;
 use uiua::{Node, Purity, Uiua, Value};
 
-use crate::graph::{Data, DataGraph, SmallStack};
+use crate::graph::{Data, DataGraph, Stack};
 use axis::{Axis, Condition};
 
 /// Symbolic shape
-pub type SymShape = SmallVec<[Axis; 4]>;
+pub type SymShape = SmallVec<[Axis; 2]>;
 
 /// Statically-inferred shape information about data flowing through a program
 #[derive(Clone, Debug)]
@@ -41,7 +41,7 @@ pub struct NodeInfo {
     /// Info about each value output by this node
     pub vals: SmallVec<[ValInfo; 1]>,
     /// For functions that needed to be analyzed for this node
-    pub subfunc_idxs: SmallVec<[usize; 2]>,
+    pub subfunc_idxs: Vec<usize>,
 }
 
 pub type InfoMap = HashMap<NodeIndex, NodeInfo>;
@@ -219,14 +219,14 @@ impl NodeInfo {
     pub fn one_val(val_info: ValInfo) -> Self {
         Self {
             vals: smallvec![val_info],
-            subfunc_idxs: SmallVec::new(),
+            subfunc_idxs: Vec::new(),
         }
     }
 
     pub fn many_vals(val_infos: impl Iterator<Item = ValInfo>) -> Self {
         Self {
             vals: val_infos.collect(),
-            subfunc_idxs: SmallVec::new(),
+            subfunc_idxs: Vec::new(),
         }
     }
 
@@ -235,14 +235,14 @@ impl NodeInfo {
     ) -> Result<Self, E> {
         val_infos.collect::<Result<_, _>>().map(|val_infos| Self {
             vals: val_infos,
-            subfunc_idxs: SmallVec::new(),
+            subfunc_idxs: Vec::new(),
         })
     }
 
     pub fn no_vals() -> Self {
         Self {
             vals: SmallVec::new(),
-            subfunc_idxs: SmallVec::new(),
+            subfunc_idxs: Vec::new(),
         }
     }
 
@@ -442,7 +442,7 @@ fn analyze_node<'u>(
     let deps = info_graph.neighbors(idx);
     let dep_edges = info_graph.edges(idx);
     // Sort deps using the edge weights so that they are in the correct argument order
-    let deps: SmallStack = deps
+    let deps: Stack = deps
         .zip(dep_edges.map(|e| *e.weight()))
         .sorted_by_key(|(_, (_, in_i))| *in_i)
         .map(|(idx, (out_i, _))| (idx, out_i))

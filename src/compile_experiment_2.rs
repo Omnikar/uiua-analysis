@@ -28,7 +28,7 @@ use crate::{
     analyze::{
         analyze_func_graph, axis::Axis, AnalyzedFunc, FuncInfos, FuncLib, InfoMap, ShapeInfo,
     },
-    graph::{Data, DataGraph, SmallStack},
+    graph::{Data, DataGraph, Stack},
 };
 
 /// The integer used to indicate a dynamic axis length to MLIR
@@ -232,7 +232,7 @@ fn compile_node<'c, 'a, 'u>(
 
     let deps = compile_graph.neighbors(idx);
     let dep_edges = compile_graph.edges(idx);
-    let deps: SmallStack = deps
+    let deps: Stack = deps
         .zip(dep_edges.map(|e| *e.weight()))
         .sorted_by_key(|(_, (_, in_i))| *in_i)
         .map(|(idx, (out_i, _))| (idx, out_i))
