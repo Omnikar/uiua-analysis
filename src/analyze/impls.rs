@@ -179,6 +179,7 @@ pub fn floor(ctx: AnalyzeCtx) -> Result<NodeInfo> {
     if let Known(val) = dep_info.shape {
         dep_info.shape = Known(val.floor(ctx.uiua)?);
     }
+    dep_info.range.float = false;
     Ok(NodeInfo::one_val(dep_info))
 }
 
@@ -190,6 +191,7 @@ pub fn ceil(ctx: AnalyzeCtx) -> Result<NodeInfo> {
     if let Known(val) = dep_info.shape {
         dep_info.shape = Known(val.ceil(ctx.uiua)?);
     }
+    dep_info.range.float = false;
     Ok(NodeInfo::one_val(dep_info))
 }
 
@@ -201,6 +203,7 @@ pub fn round(ctx: AnalyzeCtx) -> Result<NodeInfo> {
     if let Known(val) = dep_info.shape {
         dep_info.shape = Known(val.round(ctx.uiua)?);
     }
+    dep_info.range.float = false;
     Ok(NodeInfo::one_val(dep_info))
 }
 
@@ -695,7 +698,7 @@ pub fn bits(ctx: AnalyzeCtx) -> Result<NodeInfo> {
             Unranked { prefix, suffix }
         }
     };
-    let range = RangeInfo::bool().signed(dep_info.range.is_signed());
+    let range = RangeInfo::bool().signed(dep_info.range.signed);
     Ok(NodeInfo::one_val(ValInfo::new(0, shape, range)))
 }
 
@@ -948,7 +951,7 @@ pub fn rand(_ctx: AnalyzeCtx) -> Result<NodeInfo> {
     Ok(NodeInfo::one_val(ValInfo::new(
         0,
         Ranked(SymShape::new()),
-        RangeInfo::Float(1),
+        RangeInfo::new(1, false, true),
     )))
 }
 

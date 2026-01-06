@@ -28,11 +28,11 @@ pub enum ShapeInfo {
     Unranked { prefix: SymShape, suffix: SymShape },
 }
 
-#[derive(Clone, Copy, Debug)]
-pub enum RangeInfo {
-    Unsigned(u64),
-    Signed(u64),
-    Float(u64),
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RangeInfo {
+    pub extent: u64,
+    pub signed: bool,
+    pub float: bool,
 }
 
 /// Statically-inferred information about data flowing through a program
@@ -329,7 +329,7 @@ impl ShapeInfo {
 
 impl RangeInfo {
     pub fn from_value(value: &Value) -> Self {
-        let mut range = Self::Unsigned(0);
+        let mut range = Self::new(0, false, false);
         match value {
             Value::Byte(array) => {
                 for elem in array.elements() {
@@ -353,16 +353,28 @@ impl RangeInfo {
         range
     }
 
+    pub fn new(extent: u64, signed: bool, float: bool) -> Self {
+        Self {
+            extent,
+            signed,
+            float,
+        }
+    }
+
+    pub fn uint(extent: u64) -> Self {
+        Self::new(extent, false, false)
+    }
+
     pub fn bool() -> Self {
-        Self::Unsigned(1)
+        Self::uint(1)
     }
 
     pub fn index() -> Self {
-        Self::Unsigned(usize::MAX as u64)
+        Self::uint(usize::MAX as u64)
     }
 
     pub fn try_index<T: TryInto<u64>>(extent: Option<T>) -> Self {
-        Self::Unsigned(
+        Self::uint(
             extent
                 .and_then(|x| x.try_into().ok())
                 .map(|x| x - 1)
@@ -371,75 +383,32 @@ impl RangeInfo {
     }
 
     pub fn nat() -> Self {
-        Self::Unsigned(u64::MAX)
+        Self::uint(u64::MAX)
     }
 
     pub fn zero() -> Self {
-        Self::Unsigned(0)
+        Self::uint(0)
     }
 
     pub fn expand(&mut self, num: u64) {
-        *self.extent_mut() = self.extent().max(num as u64)
+        self.extent = self.extent.max(num)
     }
 
-    pub fn signed(self, signed: bool) -> Self {
-        use RangeInfo::*;
-        if signed {
-            match self {
-                Unsigned(x) | Signed(x) => Signed(x),
-                Float(x) => Float(x),
-            }
-        } else {
-            self
-        }
+    pub fn signed(mut self, signed: bool) -> Self {
+        self.signed = signed;
+        self
     }
 
-    pub fn float(self, float: bool) -> Self {
-        if float {
-            RangeInfo::Float(self.extent())
-        } else {
-            self
-        }
+    pub fn float(mut self, float: bool) -> Self {
+        self.float = float;
+        self
     }
 
-    pub fn is_signed(self) -> bool {
-        match self {
-            RangeInfo::Unsigned(_) => false,
-            RangeInfo::Signed(_) | RangeInfo::Float(_) => true,
-        }
-    }
-
-    pub fn is_float(self) -> bool {
-        match self {
-            RangeInfo::Unsigned(_) | RangeInfo::Signed(_) => false,
-            RangeInfo::Float(_) => true,
-        }
-    }
-
-    pub fn extent(self) -> u64 {
-        match self {
-            RangeInfo::Unsigned(x) => x,
-            RangeInfo::Signed(x) => x,
-            RangeInfo::Float(x) => x,
-        }
-    }
-
-    pub fn extent_mut(&mut self) -> &mut u64 {
-        match self {
-            RangeInfo::Unsigned(x) => x,
-            RangeInfo::Signed(x) => x,
-            RangeInfo::Float(x) => x,
-        }
-    }
-
-    pub fn max(self, rhs: Self) -> Self {
-        let x = self.extent().max(rhs.extent());
-        use RangeInfo::*;
-        match (self, rhs) {
-            (Float(_), _) | (_, Float(_)) => Float(x),
-            (Signed(_), _) | (_, Signed(_)) => Signed(x),
-            _ => Unsigned(x),
-        }
+    pub fn max(mut self, rhs: Self) -> Self {
+        self.extent = self.extent.max(rhs.extent);
+        self.signed |= rhs.signed;
+        self.float |= rhs.float;
+        self
     }
 }
 
@@ -447,7 +416,7 @@ impl std::ops::Add for RangeInfo {
     type Output = Self;
     fn add(self, rhs: Self) -> Self {
         let mut range = self.max(rhs);
-        range.expand(self.extent().saturating_add(rhs.extent()));
+        range.expand(self.extent.saturating_add(rhs.extent));
         range
     }
 }
@@ -455,7 +424,7 @@ impl std::ops::Sub for RangeInfo {
     type Output = Self;
     fn sub(self, rhs: Self) -> Self {
         let mut range = self.max(rhs);
-        range.expand(self.extent().saturating_add(rhs.extent()));
+        range.expand(self.extent.saturating_add(rhs.extent));
         range.signed(true)
     }
 }
@@ -463,20 +432,18 @@ impl std::ops::Mul for RangeInfo {
     type Output = Self;
     fn mul(self, rhs: Self) -> Self {
         let mut range = self.max(rhs);
-        range.expand(self.extent().saturating_mul(rhs.extent()));
+        range.expand(self.extent.saturating_mul(rhs.extent));
         range
     }
 }
 impl std::ops::Div for RangeInfo {
     type Output = Self;
-    fn div(self, _rhs: Self) -> Self {
-        // let extent = if rhs.is_float() {
-        //     2u64.pow(53)
-        // } else {
-        //     self.extent().div_ceil(rhs.extent())
-        // };
-        let extent = 2u64.pow(53);
-        Self::Float(extent)
+    #[allow(clippy::suspicious_arithmetic_impl)]
+    fn div(mut self, rhs: Self) -> Self {
+        self.extent = 2u64.pow(53);
+        self.signed |= rhs.signed;
+        self.float = true;
+        self
     }
 }
 
