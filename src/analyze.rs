@@ -15,18 +15,6 @@ use axis::{Axis, Condition};
 /// Symbolic shape
 pub type SymShape = SmallVec<[Axis; 4]>;
 
-pub struct AnalyzedFunc<'u> {
-    pub id: uiua::FunctionId,
-    pub graph: DataGraph<'u>,
-    pub infos: FuncInfos<'u>,
-    pub span: Option<usize>,
-}
-
-/// Graphs and analysis results for bound functions
-pub struct FuncLib<'u> {
-    pub funcs: Vec<AnalyzedFunc<'u>>,
-}
-
 /// Statically-inferred shape information about data flowing through a program
 #[derive(Clone, Debug)]
 pub enum ShapeInfo {
@@ -67,6 +55,18 @@ pub struct FuncInfos<'u> {
     pub args: SmallVec<[ValInfo; 2]>,
     pub outs: SmallVec<[ValInfo; 1]>,
     pub purity: Purity,
+}
+
+pub struct AnalyzedFunc<'u> {
+    pub id: uiua::FunctionId,
+    pub graph: DataGraph<'u>,
+    pub infos: FuncInfos<'u>,
+    pub span: Option<usize>,
+}
+
+/// Graphs and analysis results for bound functions
+pub struct FuncLib<'u> {
+    pub funcs: Vec<AnalyzedFunc<'u>>,
 }
 
 impl<'u> AnalyzedFunc<'u> {
