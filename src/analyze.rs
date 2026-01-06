@@ -7,7 +7,7 @@ use petgraph::graph::NodeIndex;
 use petgraph::stable_graph::StableGraph;
 use smallvec::{smallvec, SmallVec};
 use std::collections::HashMap;
-use uiua::{Node, Purity, Uiua, Value};
+use uiua::{Node, Purity, RealArrayValue, Uiua, Value};
 
 use crate::graph::{Data, DataGraph, Stack};
 use axis::{Axis, Condition};
@@ -28,11 +28,19 @@ pub enum ShapeInfo {
     Unranked { prefix: SymShape, suffix: SymShape },
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum RangeInfo {
+    Unsigned(u64),
+    Signed(u64),
+    Float(u64),
+}
+
 /// Statically-inferred information about data flowing through a program
 #[derive(Clone, Debug)]
 pub struct ValInfo {
     pub typ: u8,
     pub shape: ShapeInfo,
+    pub range: RangeInfo,
 }
 
 /// Statically-inferred information about a particular node of a program
@@ -202,7 +210,7 @@ fn try_match_func(
             out_info
                 .shape
                 .substitute(&substs)
-                .map(|shape| ValInfo::new(out_info.typ, shape))
+                .map(|shape| ValInfo::new(out_info.typ, shape, out_info.range))
         });
 
         NodeInfo::try_many_vals(outs)
@@ -210,8 +218,13 @@ fn try_match_func(
 }
 
 impl ValInfo {
-    pub fn new(typ: u8, shape: ShapeInfo) -> Self {
-        Self { typ, shape }
+    pub fn new(typ: u8, shape: ShapeInfo, range: RangeInfo) -> Self {
+        Self { typ, shape, range }
+    }
+
+    pub fn from_value(value: Value) -> Self {
+        let (typ, range) = (typ(&value), RangeInfo::from_value(&value));
+        Self::new(typ, ShapeInfo::Known(value), range)
     }
 }
 
@@ -259,8 +272,9 @@ impl FromIterator<ValInfo> for NodeInfo {
 
 impl ShapeInfo {
     /// Returns the rank if it is known
-    fn rank(&self) -> Option<usize> {
+    pub fn rank(&self) -> Option<usize> {
         match self {
+            Self::Known(val) => Some(val.shape.len()),
             Self::Ranked(shape) => Some(shape.len()),
             _ => None,
         }
@@ -269,7 +283,7 @@ impl ShapeInfo {
     /// Returns `Some(Some(length))` if rank ≥1
     /// Returns `Some(None)` if known to be a scalar
     /// Returns `None` if whether it is a scalar is unknown
-    fn len(&self) -> Option<Option<Axis>> {
+    pub fn len(&self) -> Option<Option<Axis>> {
         match self {
             ShapeInfo::Known(val) => Some(val.shape.first().map(Into::into)),
             ShapeInfo::Ranked(shape) => Some(shape.first().cloned()),
@@ -277,7 +291,7 @@ impl ShapeInfo {
         }
     }
 
-    fn to_nvars(&self) -> usize {
+    pub fn to_nvars(&self) -> usize {
         match self {
             ShapeInfo::Known(_) => 0,
             ShapeInfo::Ranked(shape) => shape.iter().map(Axis::to_nvars).max().unwrap_or_default(),
@@ -290,7 +304,7 @@ impl ShapeInfo {
         }
     }
 
-    fn substitute(&self, substs: &HashMap<usize, Axis>) -> Result<Self> {
+    pub fn substitute(&self, substs: &HashMap<usize, Axis>) -> Result<Self> {
         match self {
             ShapeInfo::Known(val) => Ok(ShapeInfo::Known(val.clone())),
             ShapeInfo::Ranked(shape) => shape
@@ -310,6 +324,159 @@ impl ShapeInfo {
                 Ok(ShapeInfo::Unranked { prefix, suffix })
             }
         }
+    }
+}
+
+impl RangeInfo {
+    pub fn from_value(value: &Value) -> Self {
+        let mut range = Self::Unsigned(0);
+        match value {
+            Value::Byte(array) => {
+                for elem in array.elements() {
+                    range.expand(*elem as u64);
+                }
+            }
+            Value::Num(array) => {
+                for elem in array.elements() {
+                    range = range.float(!elem.is_int()).signed(*elem < 0.0);
+                    range.expand(elem.abs().ceil() as u64);
+                }
+            }
+            Value::Char(array) => {
+                for elem in array.elements() {
+                    range.expand(*elem as u64);
+                }
+            }
+            Value::Box(_array) => todo!(),
+            Value::Complex(_array) => unimplemented!(),
+        }
+        range
+    }
+
+    pub fn bool() -> Self {
+        Self::Unsigned(1)
+    }
+
+    pub fn index() -> Self {
+        Self::Unsigned(usize::MAX as u64)
+    }
+
+    pub fn try_index<T: TryInto<u64>>(extent: Option<T>) -> Self {
+        Self::Unsigned(
+            extent
+                .and_then(|x| x.try_into().ok())
+                .map(|x| x - 1)
+                .unwrap_or(usize::MAX as u64),
+        )
+    }
+
+    pub fn nat() -> Self {
+        Self::Unsigned(u64::MAX)
+    }
+
+    pub fn zero() -> Self {
+        Self::Unsigned(0)
+    }
+
+    pub fn expand(&mut self, num: u64) {
+        *self.extent_mut() = self.extent().max(num as u64)
+    }
+
+    pub fn signed(self, signed: bool) -> Self {
+        use RangeInfo::*;
+        if signed {
+            match self {
+                Unsigned(x) | Signed(x) => Signed(x),
+                Float(x) => Float(x),
+            }
+        } else {
+            self
+        }
+    }
+
+    pub fn float(self, float: bool) -> Self {
+        if float {
+            RangeInfo::Float(self.extent())
+        } else {
+            self
+        }
+    }
+
+    pub fn is_signed(self) -> bool {
+        match self {
+            RangeInfo::Unsigned(_) => false,
+            RangeInfo::Signed(_) | RangeInfo::Float(_) => true,
+        }
+    }
+
+    pub fn is_float(self) -> bool {
+        match self {
+            RangeInfo::Unsigned(_) | RangeInfo::Signed(_) => false,
+            RangeInfo::Float(_) => true,
+        }
+    }
+
+    pub fn extent(self) -> u64 {
+        match self {
+            RangeInfo::Unsigned(x) => x,
+            RangeInfo::Signed(x) => x,
+            RangeInfo::Float(x) => x,
+        }
+    }
+
+    pub fn extent_mut(&mut self) -> &mut u64 {
+        match self {
+            RangeInfo::Unsigned(x) => x,
+            RangeInfo::Signed(x) => x,
+            RangeInfo::Float(x) => x,
+        }
+    }
+
+    pub fn max(self, rhs: Self) -> Self {
+        let x = self.extent().max(rhs.extent());
+        use RangeInfo::*;
+        match (self, rhs) {
+            (Float(_), _) | (_, Float(_)) => Float(x),
+            (Signed(_), _) | (_, Signed(_)) => Signed(x),
+            _ => Unsigned(x),
+        }
+    }
+}
+
+impl std::ops::Add for RangeInfo {
+    type Output = Self;
+    fn add(self, rhs: Self) -> Self {
+        let mut range = self.max(rhs);
+        range.expand(self.extent().saturating_add(rhs.extent()));
+        range
+    }
+}
+impl std::ops::Sub for RangeInfo {
+    type Output = Self;
+    fn sub(self, rhs: Self) -> Self {
+        let mut range = self.max(rhs);
+        range.expand(self.extent().saturating_add(rhs.extent()));
+        range.signed(true)
+    }
+}
+impl std::ops::Mul for RangeInfo {
+    type Output = Self;
+    fn mul(self, rhs: Self) -> Self {
+        let mut range = self.max(rhs);
+        range.expand(self.extent().saturating_mul(rhs.extent()));
+        range
+    }
+}
+impl std::ops::Div for RangeInfo {
+    type Output = Self;
+    fn div(self, _rhs: Self) -> Self {
+        // let extent = if rhs.is_float() {
+        //     2u64.pow(53)
+        // } else {
+        //     self.extent().div_ceil(rhs.extent())
+        // };
+        let extent = 2u64.pow(53);
+        Self::Float(extent)
     }
 }
 
@@ -481,9 +648,7 @@ fn analyze_node<'u>(
         Data::Arg(i) => {
             NodeInfo::one_val(arg_infos.get(i).context("Insufficient arg info")?.clone())
         }
-        Data::Node(Node::Push(val)) => {
-            NodeInfo::one_val(ValInfo::new(typ(val), ShapeInfo::Known(val.clone())))
-        }
+        Data::Node(Node::Push(val)) => NodeInfo::one_val(ValInfo::from_value(val.clone())),
         Data::Node(Node::Call(func, span)) => {
             let mut func_result = ctx.funclib.find(&func.id, &ctx.dep_infos, ctx.nvars);
             if func_result.is_none() {

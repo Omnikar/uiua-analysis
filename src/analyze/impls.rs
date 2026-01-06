@@ -6,7 +6,9 @@ use smallvec::{smallvec, SmallVec};
 use uiua::{SigNode, Value};
 
 use super::axis::{Axis, Condition, Relation};
-use super::{analyze_subgraph, typ_name, FuncLib, InfoMap, NodeInfo, ShapeInfo, SymShape, ValInfo};
+use super::{
+    analyze_subgraph, typ_name, FuncLib, InfoMap, NodeInfo, RangeInfo, ShapeInfo, SymShape, ValInfo,
+};
 use crate::graph::DataGraph;
 
 use ShapeInfo::*;
@@ -28,6 +30,11 @@ fn one_arg(mut dep_infos: Vec<ValInfo>) -> Result<ValInfo> {
 }
 fn two_args(dep_infos: Vec<ValInfo>) -> Result<[ValInfo; 2]> {
     n_args::<2>(dep_infos)
+}
+
+fn known(value: Value) -> (ShapeInfo, RangeInfo) {
+    let range = RangeInfo::from_value(&value);
+    (ShapeInfo::Known(value), range)
 }
 
 fn pervade_shapes(
@@ -268,7 +275,11 @@ fn cmp(
 
     let shape = dyadic_pervasive(lhs.shape, rhs.shape, func, ctx.reqs, ctx.uiua)?;
 
-    Ok(NodeInfo::one_val(ValInfo::new(typ, shape)))
+    Ok(NodeInfo::one_val(ValInfo::new(
+        typ,
+        shape,
+        RangeInfo::bool(),
+    )))
 }
 
 pub fn eq(ctx: AnalyzeCtx) -> Result<NodeInfo> {
@@ -311,7 +322,9 @@ pub fn add(ctx: AnalyzeCtx) -> Result<NodeInfo> {
 
     let shape = dyadic_pervasive(lhs.shape, rhs.shape, Value::add, ctx.reqs, ctx.uiua)?;
 
-    Ok(NodeInfo::one_val(ValInfo::new(typ, shape)))
+    let range = lhs.range + rhs.range;
+
+    Ok(NodeInfo::one_val(ValInfo::new(typ, shape, range)))
 }
 
 pub fn sub(ctx: AnalyzeCtx) -> Result<NodeInfo> {
@@ -331,7 +344,9 @@ pub fn sub(ctx: AnalyzeCtx) -> Result<NodeInfo> {
 
     let shape = dyadic_pervasive(lhs.shape, rhs.shape, Value::sub, ctx.reqs, ctx.uiua)?;
 
-    Ok(NodeInfo::one_val(ValInfo::new(typ, shape)))
+    let range = rhs.range - lhs.range;
+
+    Ok(NodeInfo::one_val(ValInfo::new(typ, shape, range)))
 }
 
 pub fn mul(ctx: AnalyzeCtx) -> Result<NodeInfo> {
@@ -351,7 +366,9 @@ pub fn mul(ctx: AnalyzeCtx) -> Result<NodeInfo> {
 
     let shape = dyadic_pervasive(lhs.shape, rhs.shape, Value::mul, ctx.reqs, ctx.uiua)?;
 
-    Ok(NodeInfo::one_val(ValInfo::new(typ, shape)))
+    let range = lhs.range * rhs.range;
+
+    Ok(NodeInfo::one_val(ValInfo::new(typ, shape, range)))
 }
 
 pub fn div(ctx: AnalyzeCtx) -> Result<NodeInfo> {
@@ -371,33 +388,35 @@ pub fn div(ctx: AnalyzeCtx) -> Result<NodeInfo> {
 
     let shape = dyadic_pervasive(lhs.shape, rhs.shape, Value::div, ctx.reqs, ctx.uiua)?;
 
-    Ok(NodeInfo::one_val(ValInfo::new(typ, shape)))
+    let range = rhs.range / lhs.range;
+
+    Ok(NodeInfo::one_val(ValInfo::new(typ, shape, range)))
 }
 
 // -- Monadic Array Functions --
 
 pub fn len(ctx: AnalyzeCtx) -> Result<NodeInfo> {
     let dep_info = one_arg(ctx.dep_infos)?;
-    let shape = match dep_info.shape {
-        Known(value) => Known(value.shape.first().copied().unwrap_or(1).into()),
+    let (shape, range) = match dep_info.shape {
+        Known(value) => known(value.shape.first().copied().unwrap_or(1).into()),
         Ranked(prefix) | Unranked { prefix, .. } => {
             if let Some(len) = prefix.first().and_then(Axis::only_const) {
                 if len < 0 {
                     bail!("Inferred negative length of {len}");
                 }
-                Known((len as usize).into())
+                known((len as usize).into())
             } else {
-                Ranked(SymShape::new())
+                (Ranked(SymShape::new()), RangeInfo::index())
             }
         }
     };
-    Ok(NodeInfo::one_val(ValInfo::new(0, shape)))
+    Ok(NodeInfo::one_val(ValInfo::new(0, shape, range)))
 }
 
 pub fn shape(ctx: AnalyzeCtx) -> Result<NodeInfo> {
     let dep_info = one_arg(ctx.dep_infos)?;
-    let shape = match dep_info.shape {
-        Known(value) => Known(value.shape.iter().copied().collect()),
+    let (shape, range) = match dep_info.shape {
+        Known(value) => known(value.shape.iter().copied().collect()),
         Ranked(shape) => {
             if let Some(real_shape) = shape
                 .iter()
@@ -405,14 +424,17 @@ pub fn shape(ctx: AnalyzeCtx) -> Result<NodeInfo> {
                 .map(|v| v.and_then(|v| (v >= 0).then_some(v as usize)))
                 .collect::<Option<Value>>()
             {
-                Known(real_shape)
+                known(real_shape)
             } else {
-                Ranked(smallvec![shape.len().into()])
+                (Ranked(smallvec![shape.len().into()]), RangeInfo::index())
             }
         }
-        Unranked { .. } => Ranked(smallvec![Axis::newvar(ctx.nvars)]),
+        Unranked { .. } => (
+            Ranked(smallvec![Axis::newvar(ctx.nvars)]),
+            RangeInfo::index(),
+        ),
     };
-    Ok(NodeInfo::one_val(ValInfo::new(0, shape)))
+    Ok(NodeInfo::one_val(ValInfo::new(0, shape, range)))
 }
 
 pub fn range(ctx: AnalyzeCtx) -> Result<NodeInfo> {
@@ -424,10 +446,10 @@ pub fn range(ctx: AnalyzeCtx) -> Result<NodeInfo> {
         );
     }
     // TODO: Add an upper bound to the size of range which will be computed ahead of time?
-    let shape = match dep_info.shape {
-        Known(value) => Known(value.range(ctx.uiua)?),
+    let (shape, range) = match dep_info.shape {
+        Known(value) => known(value.range(ctx.uiua)?),
         Ranked(mut shape) => {
-            if shape.is_empty() {
+            let shape = if shape.is_empty() {
                 Ranked(smallvec![Axis::newvar(ctx.nvars)])
             } else if shape.len() == 1 {
                 let len = shape.remove(0);
@@ -446,7 +468,8 @@ pub fn range(ctx: AnalyzeCtx) -> Result<NodeInfo> {
                 }
             } else {
                 bail!("Range max should be a single integer or a list of integers, but its rank is {}", shape.len());
-            }
+            };
+            (shape, RangeInfo::nat())
         }
         Unranked {
             mut prefix,
@@ -471,14 +494,17 @@ pub fn range(ctx: AnalyzeCtx) -> Result<NodeInfo> {
             } else {
                 bail!("Range max should be a single integer or a list of integers");
             };
-            Unranked {
-                prefix: SymShape::new(),
-                suffix: smallvec![len],
-            }
+            (
+                Unranked {
+                    prefix: SymShape::new(),
+                    suffix: smallvec![len],
+                },
+                RangeInfo::nat(),
+            )
         }
     };
 
-    Ok(NodeInfo::one_val(ValInfo::new(0, shape)))
+    Ok(NodeInfo::one_val(ValInfo::new(0, shape, range)))
 }
 
 pub fn first(ctx: AnalyzeCtx) -> Result<NodeInfo> {
@@ -506,7 +532,11 @@ pub fn first(ctx: AnalyzeCtx) -> Result<NodeInfo> {
         Unranked { prefix, suffix } => todo!(),
     };
 
-    Ok(NodeInfo::one_val(ValInfo::new(dep_info.typ, shape)))
+    Ok(NodeInfo::one_val(ValInfo::new(
+        dep_info.typ,
+        shape,
+        dep_info.range,
+    )))
 }
 
 pub fn last(ctx: AnalyzeCtx) -> Result<NodeInfo> {
@@ -534,7 +564,11 @@ pub fn last(ctx: AnalyzeCtx) -> Result<NodeInfo> {
         Unranked { prefix, suffix } => todo!(),
     };
 
-    Ok(NodeInfo::one_val(ValInfo::new(dep_info.typ, shape)))
+    Ok(NodeInfo::one_val(ValInfo::new(
+        dep_info.typ,
+        shape,
+        dep_info.range,
+    )))
 }
 
 pub fn reverse(ctx: AnalyzeCtx) -> Result<NodeInfo> {
@@ -558,7 +592,11 @@ pub fn deshape(ctx: AnalyzeCtx) -> Result<NodeInfo> {
         }
         Unranked { .. } => Ranked(smallvec![Axis::newvar(ctx.nvars)]),
     };
-    Ok(NodeInfo::one_val(ValInfo::new(dep_info.typ, shape)))
+    Ok(NodeInfo::one_val(ValInfo::new(
+        dep_info.typ,
+        shape,
+        dep_info.range,
+    )))
 }
 
 pub fn deshape_sub(sub: i32, ctx: AnalyzeCtx) -> Result<NodeInfo> {
@@ -608,7 +646,11 @@ pub fn deshape_sub(sub: i32, ctx: AnalyzeCtx) -> Result<NodeInfo> {
             Unranked { prefix, suffix }
         }
     };
-    Ok(NodeInfo::one_val(ValInfo::new(dep_info.typ, shape)))
+    Ok(NodeInfo::one_val(ValInfo::new(
+        dep_info.typ,
+        shape,
+        dep_info.range,
+    )))
 }
 
 pub fn fix(ctx: AnalyzeCtx) -> Result<NodeInfo> {
@@ -627,7 +669,11 @@ pub fn fix(ctx: AnalyzeCtx) -> Result<NodeInfo> {
             Unranked { prefix, suffix }
         }
     };
-    Ok(NodeInfo::one_val(ValInfo::new(dep_info.typ, shape)))
+    Ok(NodeInfo::one_val(ValInfo::new(
+        dep_info.typ,
+        shape,
+        dep_info.range,
+    )))
 }
 
 pub fn bits(ctx: AnalyzeCtx) -> Result<NodeInfo> {
@@ -649,7 +695,8 @@ pub fn bits(ctx: AnalyzeCtx) -> Result<NodeInfo> {
             Unranked { prefix, suffix }
         }
     };
-    Ok(NodeInfo::one_val(ValInfo::new(0, shape)))
+    let range = RangeInfo::bool().signed(dep_info.range.is_signed());
+    Ok(NodeInfo::one_val(ValInfo::new(0, shape, range)))
 }
 
 pub fn transpose(ctx: AnalyzeCtx) -> Result<NodeInfo> {
@@ -676,7 +723,11 @@ pub fn transpose(ctx: AnalyzeCtx) -> Result<NodeInfo> {
             Unranked { prefix, suffix }
         }
     };
-    Ok(NodeInfo::one_val(ValInfo::new(dep_info.typ, shape)))
+    Ok(NodeInfo::one_val(ValInfo::new(
+        dep_info.typ,
+        shape,
+        dep_info.range,
+    )))
 }
 
 pub fn transpose_n(n: i32, ctx: AnalyzeCtx) -> Result<NodeInfo> {
@@ -696,7 +747,11 @@ pub fn transpose_n(n: i32, ctx: AnalyzeCtx) -> Result<NodeInfo> {
         Unranked { prefix, suffix } => todo!(),
     };
 
-    Ok(NodeInfo::one_val(ValInfo::new(dep_info.typ, shape)))
+    Ok(NodeInfo::one_val(ValInfo::new(
+        dep_info.typ,
+        shape,
+        dep_info.range,
+    )))
 }
 
 pub fn sort(ctx: AnalyzeCtx) -> Result<NodeInfo> {
@@ -720,6 +775,14 @@ pub fn rise(ctx: AnalyzeCtx) -> Result<NodeInfo> {
     if let Known(value) = &mut dep_info.shape {
         *value = value.rise().into();
     }
+    dep_info.range = match dep_info.shape.len() {
+        // Known length, output must be less
+        Some(Some(len)) => RangeInfo::try_index(len.only_const()),
+        // Known scalar
+        Some(None) => RangeInfo::zero(),
+        // Unknown length
+        None => RangeInfo::index(),
+    };
     Ok(NodeInfo::one_val(dep_info))
 }
 
@@ -728,6 +791,14 @@ pub fn fall(ctx: AnalyzeCtx) -> Result<NodeInfo> {
     if let Known(value) = &mut dep_info.shape {
         *value = value.fall().into();
     }
+    dep_info.range = match dep_info.shape.len() {
+        // Known length, output must be less
+        Some(Some(len)) => RangeInfo::try_index(len.only_const()),
+        // Known scalar
+        Some(None) => RangeInfo::zero(),
+        // Unknown length
+        None => RangeInfo::index(),
+    };
     Ok(NodeInfo::one_val(dep_info))
 }
 
@@ -739,18 +810,30 @@ pub fn r#where(ctx: AnalyzeCtx) -> Result<NodeInfo> {
             typ_name(dep_info.typ),
         )
     }
-    let shape = match dep_info.shape {
-        Known(value) => Known(value.wher(ctx.uiua)?),
+    let (shape, range) = match dep_info.shape {
+        Known(value) => known(value.wher(ctx.uiua)?),
         Ranked(shape) => {
             if shape.len() <= 1 {
-                Ranked(smallvec![Axis::newvar(ctx.nvars)])
+                let shape_info = Ranked(smallvec![Axis::newvar(ctx.nvars)]);
+                let range = if let Some(len) = shape.first() {
+                    RangeInfo::try_index(len.only_const())
+                } else {
+                    RangeInfo::zero()
+                };
+                (shape_info, range)
             } else {
-                Ranked(smallvec![Axis::newvar(ctx.nvars), shape.len().into()])
+                let shape_info = Ranked(smallvec![Axis::newvar(ctx.nvars), shape.len().into()]);
+                let extent: Option<isize> = shape.iter().map(|ax| ax.only_const()).max().flatten();
+                let range = RangeInfo::try_index(extent);
+                (shape_info, range)
             }
         }
-        Unranked { .. } => Ranked(smallvec![Axis::newvar(ctx.nvars), Axis::newvar(ctx.nvars)]),
+        Unranked { .. } => (
+            Ranked(smallvec![Axis::newvar(ctx.nvars), Axis::newvar(ctx.nvars)]),
+            RangeInfo::index(),
+        ),
     };
-    Ok(NodeInfo::one_val(ValInfo::new(0, shape)))
+    Ok(NodeInfo::one_val(ValInfo::new(0, shape, range)))
 }
 
 pub fn deduplicate(ctx: AnalyzeCtx) -> Result<NodeInfo> {
@@ -768,35 +851,37 @@ pub fn deduplicate(ctx: AnalyzeCtx) -> Result<NodeInfo> {
 
 pub fn classify(ctx: AnalyzeCtx) -> Result<NodeInfo> {
     let dep_info = one_arg(ctx.dep_infos)?;
-    let shape = match dep_info.shape {
-        Known(value) => Known(value.classify()),
+    let (shape, range) = match dep_info.shape {
+        Known(value) => known(value.classify()),
         Ranked(mut shape) => {
             if shape.is_empty() {
-                Known(0.into())
+                (Known(0.into()), RangeInfo::zero())
             } else {
                 let len = shape.remove(0);
-                Ranked(smallvec![len])
+                let range = RangeInfo::try_index(len.only_const());
+                (Ranked(smallvec![len]), range)
             }
         }
         Unranked { mut prefix, suffix } => {
-            if prefix.is_empty() && suffix.is_empty() {
+            let shape_info = if prefix.is_empty() && suffix.is_empty() {
                 Unranked { prefix, suffix }
             } else if !prefix.is_empty() {
                 let len = prefix.remove(0);
                 Ranked(smallvec![len])
             } else {
                 Ranked(smallvec![Axis::newvar(ctx.nvars)])
-            }
+            };
+            (shape_info, RangeInfo::index())
         }
     };
-    Ok(NodeInfo::one_val(ValInfo::new(0, shape)))
+    Ok(NodeInfo::one_val(ValInfo::new(0, shape, range)))
 }
 
 pub fn occurrences(mut ctx: AnalyzeCtx) -> Result<NodeInfo> {
     let dep_info = one_arg(ctx.dep_infos)?;
     if let Known(value) = dep_info.shape {
-        let shape = Known(value.occurrences().into());
-        Ok(NodeInfo::one_val(ValInfo::new(0, shape)))
+        let (shape, range) = known(value.occurrences().into());
+        Ok(NodeInfo::one_val(ValInfo::new(0, shape, range)))
     } else {
         ctx.dep_infos = vec![dep_info];
         classify(ctx)
@@ -810,7 +895,7 @@ pub fn r#box(ctx: AnalyzeCtx) -> Result<NodeInfo> {
             value.box_it();
             dep_info
         } else {
-            ValInfo::new(2, Ranked(SymShape::new()))
+            ValInfo::new(2, Ranked(SymShape::new()), RangeInfo::zero())
         },
     ))
 }
@@ -860,7 +945,11 @@ pub fn member_of(ctx: AnalyzeCtx) -> Result<NodeInfo> {
 // -- Misc Functions --
 
 pub fn rand(_ctx: AnalyzeCtx) -> Result<NodeInfo> {
-    Ok(NodeInfo::one_val(ValInfo::new(0, Ranked(SymShape::new()))))
+    Ok(NodeInfo::one_val(ValInfo::new(
+        0,
+        Ranked(SymShape::new()),
+        RangeInfo::Float(1),
+    )))
 }
 
 pub fn r#gen(ctx: AnalyzeCtx) -> Result<NodeInfo> {
@@ -916,7 +1005,7 @@ pub fn rows<'u>(funcs: &'u [SigNode], ctx: AnalyzeCtx<'_, '_, '_, '_, 'u>) -> Re
                 Unranked { prefix, suffix }
             }
         };
-        row_infos.push(ValInfo::new(info.typ, row_shape));
+        row_infos.push(ValInfo::new(info.typ, row_shape, info.range));
     }
 
     let data_graph = DataGraph::from_node(func, &ctx.uiua.asm)?;
@@ -946,8 +1035,7 @@ pub fn rows<'u>(funcs: &'u [SigNode], ctx: AnalyzeCtx<'_, '_, '_, '_, 'u>) -> Re
                 Unranked { prefix, suffix }
             }
         };
-        // ValInfo::new(info.typ, shape).func(ctx.subfuncs.len())
-        ValInfo::new(info.typ, shape)
+        ValInfo::new(info.typ, shape, info.range)
     };
 
     let out = (data_graph
@@ -1012,7 +1100,7 @@ pub fn table<'u>(funcs: &'u [SigNode], ctx: AnalyzeCtx<'_, '_, '_, '_, 'u>) -> R
                 Unranked { prefix, suffix }
             }
         };
-        row_infos.push(ValInfo::new(info.typ, row_shape));
+        row_infos.push(ValInfo::new(info.typ, row_shape, info.range));
     }
 
     let data_graph = DataGraph::from_node(func, &ctx.uiua.asm)?;
@@ -1063,8 +1151,7 @@ pub fn table<'u>(funcs: &'u [SigNode], ctx: AnalyzeCtx<'_, '_, '_, '_, 'u>) -> R
                 }
             }
         };
-        // ValInfo::new(info.typ, shape).func(ctx.subfuncs.len())
-        ValInfo::new(info.typ, shape)
+        ValInfo::new(info.typ, shape, info.range)
     };
 
     let out = data_graph
@@ -1120,7 +1207,7 @@ pub fn reduce<'u>(funcs: &'u [SigNode], ctx: AnalyzeCtx<'_, '_, '_, '_, 'u>) -> 
             Unranked { prefix, suffix }
         }
     };
-    let row_info = ValInfo::new(dep_info.typ, row_shape);
+    let row_info = ValInfo::new(dep_info.typ, row_shape, dep_info.range);
 
     // This will only be true upon reduction on a scalar or rank-1 array, in which case reduction does nothing
     if matches!(row_info.shape, Known(_)) {
