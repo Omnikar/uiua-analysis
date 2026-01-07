@@ -97,6 +97,7 @@ pub fn not(ctx: AnalyzeCtx) -> Result<NodeInfo> {
     if let Known(val) = dep_info.shape {
         dep_info.shape = Known(val.not(ctx.uiua)?);
     }
+    dep_info.range.signed |= dep_info.range.extent > 1;
     Ok(NodeInfo::one_val(dep_info))
 }
 
@@ -108,6 +109,7 @@ pub fn sign(ctx: AnalyzeCtx) -> Result<NodeInfo> {
     if let Known(val) = dep_info.shape {
         dep_info.shape = Known(val.sign(ctx.uiua)?);
     }
+    dep_info.range.extent = 1;
     Ok(NodeInfo::one_val(dep_info))
 }
 
@@ -116,6 +118,7 @@ pub fn neg(ctx: AnalyzeCtx) -> Result<NodeInfo> {
     if let Known(val) = dep_info.shape {
         dep_info.shape = Known(val.neg(ctx.uiua)?);
     }
+    dep_info.range.signed = true;
     Ok(NodeInfo::one_val(dep_info))
 }
 
@@ -127,6 +130,7 @@ pub fn reciprocal(ctx: AnalyzeCtx) -> Result<NodeInfo> {
     if let Known(val) = dep_info.shape {
         dep_info.shape = Known(val.recip(ctx.uiua)?);
     }
+    dep_info.range.float = true;
     Ok(NodeInfo::one_val(dep_info))
 }
 
@@ -135,6 +139,7 @@ pub fn abs(ctx: AnalyzeCtx) -> Result<NodeInfo> {
     if let Known(val) = dep_info.shape {
         dep_info.shape = Known(val.abs(ctx.uiua)?);
     }
+    dep_info.range.signed = false;
     Ok(NodeInfo::one_val(dep_info))
 }
 
@@ -146,6 +151,7 @@ pub fn sqrt(ctx: AnalyzeCtx) -> Result<NodeInfo> {
     if let Known(val) = dep_info.shape {
         dep_info.shape = Known(val.sqrt(ctx.uiua)?);
     }
+    dep_info.range.float = true;
     Ok(NodeInfo::one_val(dep_info))
 }
 
@@ -157,6 +163,7 @@ pub fn exp(ctx: AnalyzeCtx) -> Result<NodeInfo> {
     if let Known(val) = dep_info.shape {
         dep_info.shape = Known(val.exp(ctx.uiua)?);
     }
+    dep_info.range.float = true;
     Ok(NodeInfo::one_val(dep_info))
 }
 
@@ -168,6 +175,7 @@ pub fn sin(ctx: AnalyzeCtx) -> Result<NodeInfo> {
     if let Known(val) = dep_info.shape {
         dep_info.shape = Known(val.sin(ctx.uiua)?);
     }
+    dep_info.range.float = true;
     Ok(NodeInfo::one_val(dep_info))
 }
 
