@@ -3,6 +3,8 @@ mod graph;
 
 mod compile_experiment;
 mod compile_experiment_2;
+mod compile_experiment_3;
+mod pre_compile;
 
 use itertools::Itertools;
 use petgraph::{graph::NodeIndex, Graph};
@@ -10,6 +12,19 @@ use std::collections::HashSet;
 use std::io::Write;
 
 fn main() {
+    dbg!(std::mem::size_of::<graph::Data>());
+    dbg!(std::mem::size_of::<graph::Stack>());
+    dbg!(std::mem::size_of::<graph::DataGraph>());
+    dbg!(std::mem::size_of::<analyze::axis::Axis>());
+    dbg!(std::mem::size_of::<analyze::SymShape>());
+    dbg!(std::mem::size_of::<uiua::Value>());
+    dbg!(std::mem::size_of::<analyze::ShapeInfo>());
+    dbg!(std::mem::size_of::<analyze::ValInfo>());
+    dbg!(std::mem::size_of::<analyze::NodeInfo>());
+    dbg!(std::mem::size_of::<analyze::FuncInfos>());
+    dbg!(std::mem::size_of::<analyze::AnalyzedFunc>());
+    dbg!(std::mem::size_of::<analyze::FuncLib>());
+
     let file = std::env::args().nth(1).unwrap();
     let text = std::fs::read_to_string(file).unwrap();
     let asm = uiua::Assembly::from_uasm(&text).unwrap();
@@ -17,7 +32,8 @@ fn main() {
     uiua.asm = asm;
 
     // compile_experiment::test(&uiua.asm);
-    compile_experiment_2::compile_test(&uiua).unwrap();
+    // compile_experiment_2::compile_test(&uiua).unwrap();
+    compile_experiment_3::compile_test(&uiua).unwrap();
 
     // analyze_test(&uiua);
     // use analyze::axis::Axis;
@@ -117,8 +133,12 @@ fn analyze_test(uiua: &uiua::Uiua) {
         }
     }
 
+    let prepared = pre_compile::prepare_graph(&data_graph, &infos.map, uiua);
+    dbg!(&prepared);
+
     let mut f = std::fs::File::create("graph.dot").unwrap();
-    let s = format!("{:?}", petgraph::dot::Dot::new(&data_graph.graph));
+    // let s = format!("{:?}", petgraph::dot::Dot::new(&data_graph.graph));
+    let s = format!("{:?}", petgraph::dot::Dot::new(&prepared.graph));
     let s = s.strip_prefix("digraph {\n").unwrap();
     writeln!(f, "digraph {{").unwrap();
     writeln!(f, "    node [shape=box]").unwrap();

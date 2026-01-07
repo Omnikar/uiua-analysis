@@ -65,6 +65,7 @@ pub struct FuncInfos<'u> {
     pub purity: Purity,
 }
 
+#[derive(Debug, Clone)]
 pub struct AnalyzedFunc<'u> {
     pub id: uiua::FunctionId,
     pub graph: DataGraph<'u>,
@@ -73,6 +74,7 @@ pub struct AnalyzedFunc<'u> {
 }
 
 /// Graphs and analysis results for bound functions
+#[derive(Debug, Clone)]
 pub struct FuncLib<'u> {
     pub funcs: Vec<AnalyzedFunc<'u>>,
 }
@@ -129,6 +131,12 @@ fn try_match_func(
     let mut substs = HashMap::new();
     for (arg, func_arg) in arg_infos.iter().zip(func_infos.args.iter()) {
         if arg.typ != func_arg.typ {
+            return None;
+        }
+
+        if crate::pre_compile::CompType::from_info(arg)
+            != crate::pre_compile::CompType::from_info(func_arg)
+        {
             return None;
         }
 
@@ -644,7 +652,20 @@ fn analyze_node<'u>(
                 //         Info::new(info.typ, shape)
                 //     })
                 //     .collect_vec();
-                let generic_arg_infos = &ctx.dep_infos;
+                let generic_arg_infos = ctx
+                    .dep_infos
+                    .iter()
+                    .map(|info| {
+                        if let ShapeInfo::Known(val) = &info.shape {
+                            let shape = val.shape.iter().map(Axis::from).collect();
+                            let mut info = info.clone();
+                            info.shape = ShapeInfo::Ranked(shape);
+                            info
+                        } else {
+                            info.clone()
+                        }
+                    })
+                    .collect_vec();
                 let func_infos =
                     analyze_func_graph(&data_graph, &generic_arg_infos, ctx.funclib, ctx.uiua)?;
                 ctx.funclib.funcs.push(AnalyzedFunc::new(

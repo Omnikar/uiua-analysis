@@ -16,7 +16,7 @@ use melior::{
         r#type::{FunctionType, RankedTensorType},
         *,
     },
-    pass,
+    // pass,
     utility::register_all_dialects,
     Context,
 };
@@ -26,7 +26,8 @@ use uiua::{Node, Purity};
 
 use crate::{
     analyze::{
-        analyze_func_graph, axis::Axis, AnalyzedFunc, FuncInfos, FuncLib, InfoMap, ShapeInfo,
+        analyze_func_graph, axis::Axis, AnalyzedFunc, FuncInfos, FuncLib, InfoMap, RangeInfo,
+        ShapeInfo, ValInfo,
     },
     graph::{Data, DataGraph, Stack},
 };
@@ -38,9 +39,12 @@ const DYN_AX: u64 = i64::MAX as u64 + 1;
 struct CompileContext<'c, 'u> {
     context: &'c Context,
     index_type: Type<'c>,
-    bool_type: Type<'c>,
     float_type: Type<'c>,
     char_type: Type<'c>,
+    bool_type: Type<'c>,
+    // uint_types: [Type<'c>; 4],
+    int_types: [Type<'c>; 4],
+    float_types: [Type<'c>; 2],
     uiua: &'u uiua::Uiua,
 }
 
@@ -60,15 +64,34 @@ pub fn compile_test(uiua: &uiua::Uiua) -> Result<()> {
     context.load_all_available_dialects();
 
     let index_type = Type::index(&context);
-    let bool_type = Type::parse(&context, "i1").unwrap();
     let float_type = Type::float64(&context);
     let char_type = Type::parse(&context, "i32").unwrap();
+
     let ctx = CompileContext {
         context: &context,
         index_type,
-        bool_type,
         float_type,
         char_type,
+        bool_type: Type::parse(&context, "i1").unwrap(),
+        // uint_types: [
+        //     Type::parse(&context, "ui8").unwrap(),
+        //     Type::parse(&context, "ui16").unwrap(),
+        //     Type::parse(&context, "ui32").unwrap(),
+        //     Type::parse(&context, "ui64").unwrap(),
+        // ],
+        // int_types: [
+        //     Type::parse(&context, "si8").unwrap(),
+        //     Type::parse(&context, "si16").unwrap(),
+        //     Type::parse(&context, "si32").unwrap(),
+        //     Type::parse(&context, "si64").unwrap(),
+        // ],
+        int_types: [
+            Type::parse(&context, "i8").unwrap(),
+            Type::parse(&context, "i16").unwrap(),
+            Type::parse(&context, "i32").unwrap(),
+            Type::parse(&context, "i64").unwrap(),
+        ],
+        float_types: [Type::float32(&context), Type::float64(&context)],
         uiua,
     };
 
@@ -87,6 +110,8 @@ pub fn compile_test(uiua: &uiua::Uiua) -> Result<()> {
     funclib
         .funcs
         .push(AnalyzedFunc::new(func_id, data_graph, infos, span));
+
+    dbg!(&funclib);
 
     for i in 0..funclib.funcs.len() {
         let func = compile_func(&funclib, i, ctx)?;
@@ -137,24 +162,26 @@ fn compile_func<'c>(
     let mut sig_in = Vec::new();
     let mut arg_types = Vec::new();
     for arg_info in &func.infos.args {
-        let elem_type = match arg_info.typ {
-            0 => ctx.float_type,
-            1 => ctx.char_type,
-            _ => unimplemented!(),
-        };
-        let arg_type = mk_tensor_type(&arg_info.shape, elem_type);
+        // let elem_type = match arg_info.typ {
+        //     0 => ctx.float_type,
+        //     1 => ctx.char_type,
+        //     _ => unimplemented!(),
+        // };
+        // let arg_type = mk_tensor_type(&arg_info.shape, elem_type);
+        let arg_type = mk_type(arg_info, ctx);
         sig_in.push(arg_type);
         arg_types.push((arg_type, loc));
     }
 
     let mut sig_out = Vec::new();
     for out_info in &func.infos.outs {
-        let elem_type = match out_info.typ {
-            0 => ctx.float_type,
-            1 => ctx.char_type,
-            _ => unimplemented!(),
-        };
-        let out_type = mk_tensor_type(&out_info.shape, elem_type);
+        // let elem_type = match out_info.typ {
+        //     0 => ctx.float_type,
+        //     1 => ctx.char_type,
+        //     _ => unimplemented!(),
+        // };
+        // let out_type = mk_tensor_type(&out_info.shape, elem_type);
+        let out_type = mk_type(out_info, ctx);
         sig_out.push(out_type);
     }
     if func_name == "main" {
@@ -242,12 +269,11 @@ fn compile_node<'c, 'a, 'u>(
         compile_node(dep, block, compile_graph, infos, info_map, funclib, ctx)?;
     }
 
-    use uiua::Primitive::*;
     let data = compile_graph
         .node_weight(idx)
         .expect("Node missing from compile graph")
         .0;
-    dbg!(&data);
+    use uiua::Primitive::*;
     let value = match data {
         Data::Arg(i) => vec![block.argument(i)?.into()],
         Data::Node(Node::Push(value)) => vec![constant(value, block, ctx)?],
@@ -271,12 +297,13 @@ fn compile_node<'c, 'a, 'u>(
                 .vals
                 .iter()
                 .map(|out_info| {
-                    let elem_type = match out_info.typ {
-                        0 => ctx.float_type,
-                        1 => ctx.char_type,
-                        _ => unimplemented!(),
-                    };
-                    mk_tensor_type(&out_info.shape, elem_type)
+                    // let elem_type = match out_info.typ {
+                    //     0 => ctx.float_type,
+                    //     1 => ctx.char_type,
+                    //     _ => unimplemented!(),
+                    // };
+                    // mk_tensor_type(&out_info.shape, elem_type)
+                    mk_type(out_info, ctx)
                 })
                 .collect_vec();
 
@@ -317,7 +344,8 @@ fn compile_node<'c, 'a, 'u>(
                 .and_then(|v| v.get(rhs_out_i))
                 .expect("Argument not compiled");
 
-            let out_type = mk_tensor_type(&out_info.shape, ctx.float_type);
+            // let out_type = mk_tensor_type(&out_info.shape, ctx.float_type);
+            let out_type = mk_type(out_info, ctx);
 
             let loc = span_to_loc(*span, ctx);
 
@@ -335,10 +363,21 @@ fn compile_node<'c, 'a, 'u>(
                 .get(&arg_idx)
                 .expect("Did not analyze argument")
                 .vals[arg_out_i];
-            let (elem_type, print_func) = match arg_info.typ {
-                0 => (ctx.float_type, "print_f64"),
-                1 => (ctx.char_type, "print_i32"),
-                _ => unimplemented!(),
+            // let (elem_type, print_func) = match arg_info.typ {
+            //     // 0 => (ctx.float_type, "print_f64"),
+            //     // 0 => (ctx.int_types[0], "print_i8"),
+            //     0 => ["print_i8", "print_i16", "print_i32", "print_i64"][],
+            //     1 => (ctx.char_type, "print_i32"),
+            //     _ => unimplemented!(),
+            // };
+            let elem_type = mk_elem_type(arg_info, ctx);
+            let print_func = if arg_info.typ == 1 {
+                "print_i32"
+            } else if arg_info.range.float {
+                "print_f64"
+            } else {
+                ["print_i8", "print_i16", "print_i32", "print_i64"]
+                    [int_type_idx(arg_info.range.extent, arg_info.range.signed)]
             };
             let len = match &arg_info.shape {
                 ShapeInfo::Known(val) => val.shape.elements() as u64,
@@ -375,6 +414,23 @@ fn compile_node<'c, 'a, 'u>(
 
             let deshape_op =
                 tensor::reshape(ctx.context, out_type.into(), arg_val, flat_shape_val, loc);
+
+            // let deshape_op = tensor::collapse_shape(
+            //     ctx.context,
+            //     out_type.into(),
+            //     arg_val,
+            //     ArrayAttribute::new(
+            //         ctx.context,
+            //         &[DenseI64ArrayAttribute::new(
+            //             ctx.context,
+            //             &(0..arg_info.shape.rank().unwrap())
+            //                 .map(|x| x as i64)
+            //                 .collect_vec(),
+            //         )
+            //         .into()],
+            //     ),
+            //     loc,
+            // );
 
             let deshaped_val: Value = block.append_operation(deshape_op.into()).result(0)?.into();
 
@@ -487,12 +543,13 @@ fn compile_node<'c, 'a, 'u>(
                 .iter()
                 .map(|(out_idx, out_i)| &subfunc_info_map.get(out_idx).unwrap().vals[*out_i])
                 .map(|val_info| {
-                    let elem_type = match val_info.typ {
-                        0 => ctx.float_type,
-                        1 => ctx.char_type,
-                        _ => unimplemented!(),
-                    };
+                    // let elem_type = match val_info.typ {
+                    //     0 => ctx.float_type,
+                    //     1 => ctx.char_type,
+                    //     _ => unimplemented!(),
+                    // };
                     // let tensor_type = mk_tensor_type(&val_info.shape, elem_type);
+                    let elem_type = mk_elem_type(val_info, ctx);
                     let dims = dims_from_shape_info(&val_info.shape);
                     // dbg!(&val_info, &dims);
                     // let mut dyn_axes = Vec::new();
@@ -538,11 +595,12 @@ fn compile_node<'c, 'a, 'u>(
                 .map(|arg_i| {
                     let dep_val = dep_vals[arg_i];
                     let dep_info = dep_infos[arg_i];
-                    let elem_type = match dep_info.typ {
-                        0 => ctx.float_type,
-                        1 => ctx.char_type,
-                        _ => unimplemented!(),
-                    };
+                    // let elem_type = match dep_info.typ {
+                    //     0 => ctx.float_type,
+                    //     1 => ctx.char_type,
+                    //     _ => unimplemented!(),
+                    // };
+                    let elem_type = mk_elem_type(dep_info, ctx);
                     let inner_dims = dims_from_shape_info(&dep_info.shape);
                     let inner_dims = &inner_dims[1..];
                     let inner_type = RankedTensorType::new(inner_dims, elem_type, None).into();
@@ -805,6 +863,45 @@ fn mk_tensor_type<'c>(info: &ShapeInfo, typ: Type<'c>) -> Type<'c> {
     RankedTensorType::new(&dims, typ, None).into()
 }
 
+fn int_type_idx(extent: u64, signed: bool) -> usize {
+    let x = extent;
+    let s = signed as u32;
+    (x.max(2).ilog2() + s).ilog2().saturating_sub(2).min(3) as usize
+}
+
+fn mk_elem_type<'c>(info: &ValInfo, ctx: CompileContext<'c, '_>) -> Type<'c> {
+    if info.typ == 1 {
+        // TODO: perchance?
+        return ctx.int_types[2];
+    } else if info.typ != 0 {
+        unimplemented!();
+    }
+
+    if info.range.float {
+        return ctx.float_types[1];
+    }
+
+    if info.range == RangeInfo::bool() {
+        return ctx.bool_type;
+    }
+
+    // let int_types = if info.range.is_signed() {
+    //     &ctx.int_types
+    // } else {
+    //     &ctx.uint_types
+    // };
+    // let s = info.range.is_signed() as u32;
+    // let x = info.range.extent();
+    // let i = (x.ilog2() + s).ilog2().saturating_sub(2).min(3);
+    let i = int_type_idx(info.range.extent, info.range.signed);
+    ctx.int_types[i]
+}
+
+fn mk_type<'c>(info: &ValInfo, ctx: CompileContext<'c, '_>) -> Type<'c> {
+    let elem_type = mk_elem_type(info, ctx);
+    mk_tensor_type(&info.shape, elem_type)
+}
+
 fn name_mangle(func: &AnalyzedFunc) -> Result<String> {
     let uiua::FunctionId::Named(base_name) = &func.id else {
         bail!("Attempted to mangle non-named function");
@@ -833,7 +930,8 @@ fn name_mangle(func: &AnalyzedFunc) -> Result<String> {
                         .join("x"),
                     ShapeInfo::Unranked { .. } => "U".to_owned(),
                 },
-                info.typ
+                // info.typ
+                crate::pre_compile::CompType::from_info(info),
             )
         })
         .join("_");
@@ -867,15 +965,30 @@ fn constant<'c, 'a>(
         .cloned()
         .or_else(|| value.as_byte_array().cloned().map(uiua::Array::convert))
     {
-        let tensor_type = mk_tensor_type(&ShapeInfo::Known(value.clone()), ctx.float_type);
+        // let tensor_type = mk_tensor_type(&ShapeInfo::Known(value.clone()), ctx.float_type);
+        let info = ValInfo::from_value(value.clone());
+        let tensor_type = mk_type(&info, ctx);
 
-        let elem_attrs = num_arr
-            .elements()
-            .map(|&elem| FloatAttribute::new(ctx.context, ctx.float_type, elem).into())
-            .collect_vec();
+        // let elem_attrs = num_arr
+        //     .elements()
+        //     .map(|&elem| FloatAttribute::new(ctx.context, ctx.float_type, elem).into())
+        //     .collect_vec();
+        let elem_type = mk_elem_type(&info, ctx);
+        let elem_attrs = if info.range.float {
+            num_arr
+                .elements()
+                .map(|&elem| FloatAttribute::new(ctx.context, elem_type, elem).into())
+                .collect_vec()
+        } else {
+            num_arr
+                .elements()
+                .map(|&elem| IntegerAttribute::new(elem_type, elem as i64).into())
+                .collect_vec()
+        };
         DenseElementsAttribute::new(tensor_type, &elem_attrs)?
     } else if let Some(char_arr) = value.as_char_array() {
-        let tensor_type = mk_tensor_type(&ShapeInfo::Known(value.clone()), ctx.char_type);
+        // let tensor_type = mk_tensor_type(&ShapeInfo::Known(value.clone()), ctx.char_type);
+        let tensor_type = mk_type(&ValInfo::from_value(value.clone()), ctx);
 
         let elem_attrs = char_arr
             .elements()
