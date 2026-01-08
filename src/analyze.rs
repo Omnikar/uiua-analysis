@@ -346,7 +346,8 @@ impl RangeInfo {
             }
             Value::Num(array) => {
                 for elem in array.elements() {
-                    range = range.float(!elem.is_int()).signed(*elem < 0.0);
+                    range.float |= !elem.is_int();
+                    range.signed |= *elem < 0.0;
                     range.expand(elem.abs().ceil() as u64);
                 }
             }
