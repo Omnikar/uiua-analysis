@@ -1,10 +1,10 @@
 mod analyze;
+mod compile;
 mod graph;
-
-mod compile_experiment;
-mod compile_experiment_2;
-mod compile_experiment_3;
 mod pre_compile;
+
+// mod compile_experiment;
+// mod compile_experiment_2;
 
 use itertools::Itertools;
 use petgraph::{graph::NodeIndex, Graph};
@@ -12,18 +12,18 @@ use std::collections::HashSet;
 use std::io::Write;
 
 fn main() {
-    dbg!(std::mem::size_of::<graph::Data>());
-    dbg!(std::mem::size_of::<graph::Stack>());
-    dbg!(std::mem::size_of::<graph::DataGraph>());
-    dbg!(std::mem::size_of::<analyze::axis::Axis>());
-    dbg!(std::mem::size_of::<analyze::SymShape>());
-    dbg!(std::mem::size_of::<uiua::Value>());
-    dbg!(std::mem::size_of::<analyze::ShapeInfo>());
-    dbg!(std::mem::size_of::<analyze::ValInfo>());
-    dbg!(std::mem::size_of::<analyze::NodeInfo>());
-    dbg!(std::mem::size_of::<analyze::FuncInfos>());
-    dbg!(std::mem::size_of::<analyze::AnalyzedFunc>());
-    dbg!(std::mem::size_of::<analyze::FuncLib>());
+    // dbg!(std::mem::size_of::<graph::Data>());
+    // dbg!(std::mem::size_of::<graph::Stack>());
+    // dbg!(std::mem::size_of::<graph::DataGraph>());
+    // dbg!(std::mem::size_of::<analyze::axis::Axis>());
+    // dbg!(std::mem::size_of::<analyze::SymShape>());
+    // dbg!(std::mem::size_of::<uiua::Value>());
+    // dbg!(std::mem::size_of::<analyze::ShapeInfo>());
+    // dbg!(std::mem::size_of::<analyze::ValInfo>());
+    // dbg!(std::mem::size_of::<analyze::NodeInfo>());
+    // dbg!(std::mem::size_of::<analyze::FuncInfos>());
+    // dbg!(std::mem::size_of::<analyze::AnalyzedFunc>());
+    // dbg!(std::mem::size_of::<analyze::FuncLib>());
 
     let file = std::env::args().nth(1).unwrap();
     let text = std::fs::read_to_string(file).unwrap();
@@ -33,7 +33,7 @@ fn main() {
 
     // compile_experiment::test(&uiua.asm);
     // compile_experiment_2::compile_test(&uiua).unwrap();
-    compile_experiment_3::compile_test(&uiua).unwrap();
+    compile::compile_test(&uiua).unwrap();
 
     // analyze_test(&uiua);
     // use analyze::axis::Axis;

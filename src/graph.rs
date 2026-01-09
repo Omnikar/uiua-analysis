@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use uiua::{Assembly, ImplPrimitive, Node, Primitive};
 
 pub type Stack = SmallVec<[(NodeIndex, usize); 4]>;
+pub type StackSlice<'a> = &'a [(NodeIndex, usize)];
 
 /// A graph structure used to represent the tacit flow of data through a program
 #[derive(Default, Debug, Clone)]
@@ -104,6 +105,9 @@ impl<'u> DataGraph<'u> {
             Node::Prim(Identity, _span) => {}
             Node::Prim(Pop, _span) => {
                 self.stack.pop();
+            }
+            uiua::Node::Prim(uiua::Primitive::Dup, _span) => {
+                self.stack.push(*self.stack.last().unwrap());
             }
             Node::Prim(Flip, _span) => args_mut(&mut self.stack, 2).reverse(),
             Node::Mod(On, funcs, _span) => {

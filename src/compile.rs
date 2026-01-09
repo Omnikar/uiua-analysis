@@ -1,18 +1,19 @@
+mod impls;
+
 use anyhow::{bail, Context as _, Result};
 use itertools::Itertools;
 use melior::{
     dialect::{
-        func,
-        ods::{arith, scf, tensor, tosa},
+        func, index,
+        ods::{arith, llvm, scf, tensor},
         DialectRegistry,
     },
     ir::{
         attribute::{
-            DenseElementsAttribute, DenseI32ArrayAttribute, DenseI64ArrayAttribute,
-            FlatSymbolRefAttribute, FloatAttribute, IntegerAttribute, StringAttribute,
-            TypeAttribute,
+            DenseElementsAttribute, DenseI32ArrayAttribute, FlatSymbolRefAttribute,
+            IntegerAttribute, StringAttribute, TypeAttribute,
         },
-        operation::{OperationBuilder, OperationLike},
+        operation::{OperationBuilder, OperationLike, OperationMutLike},
         r#type::{FunctionType, RankedTensorType},
         *,
     },
@@ -26,11 +27,10 @@ use uiua::{Node, Purity, SysOp};
 
 use crate::{
     analyze::{
-        analyze_func_graph, axis::Axis, AnalyzedFunc, FuncInfos, FuncLib, InfoMap, ShapeInfo,
-        ValInfo,
+        analyze_func_graph, axis::Axis, AnalyzedFunc, FuncInfos, FuncLib, ShapeInfo, ValInfo,
     },
-    graph::{Data, DataGraph, Stack},
-    pre_compile::{self, prepare_graph, Cast, CompNode, CompType, Impl, Op, PreCompileGraph},
+    graph::{Data, DataGraph, Stack, StackSlice},
+    pre_compile::{prepare_graph, CompNode, CompType, Impl, Op},
 };
 
 /// The integer used to indicate a dynamic axis length to MLIR
@@ -87,8 +87,6 @@ pub fn compile_test(uiua: &uiua::Uiua) -> Result<()> {
         let func = compile_func(&funclib, i, ctx)?;
         module.body().append_operation(func);
     }
-
-    println!("{}", module.as_operation());
 
     assert!(module.as_operation().verify());
 
@@ -177,14 +175,16 @@ fn compile_func<'c>(
 
     // TODO: Figure out what attributes to put to indicate purity
 
-    Ok(func::func(
+    let mut func = func::func(
         ctx.context,
         StringAttribute::new(ctx.context, &func_name),
         TypeAttribute::new(FunctionType::new(ctx.context, &sig_in, &sig_out).into()),
         region,
         &[],
         loc,
-    ))
+    );
+
+    Ok(func)
 }
 
 struct FuncCompileContext<'c, 'a, 'u, 'cg, 'fi, 'fl> {
@@ -226,15 +226,100 @@ fn compile_node<'c, 'a, 'u>(
     use uiua::Primitive::*;
     let value = match comp_node.op {
         Op::Data(Data::Arg(i)) => vec![block.argument(i)?.into()],
-        Op::Data(Data::Node(Node::Push(value))) => vec![constant(value, block, ctx)?],
-        Op::Data(Data::Node(Node::Call(_func, span))) => call(idx, &deps, *span, block, fctx, ctx)?,
-
-        Op::Impl(Impl::Cast(cast), span) => {
-            vec![upcast_num(cast, idx, &deps, span, block, fctx, ctx)?]
+        Op::Data(Data::Node(Node::Push(value))) => vec![impls::constant(value, block, ctx)?],
+        Op::Data(Data::Node(Node::Call(_func, span))) => {
+            impls::call(comp_node, &deps, *span, block, fctx, ctx)?
         }
 
+        Op::Impl(Impl::Cast(cast), span) => {
+            vec![impls::cast_num(
+                cast, comp_node, &deps, span, block, fctx, ctx,
+            )?]
+        }
+
+        // -- Monadic Pervasive Functions --
+        Op::Data(Data::Node(Node::Prim(Not, span))) => {
+            vec![impls::sub_const(
+                1, comp_node, &deps, *span, block, fctx, ctx,
+            )?]
+        }
+        Op::Data(Data::Node(Node::Prim(Sign, span))) => todo!(),
+        Op::Data(Data::Node(Node::Prim(Neg, span))) => {
+            vec![impls::sub_const(
+                0, comp_node, &deps, *span, block, fctx, ctx,
+            )?]
+        }
+        Op::Data(Data::Node(Node::Prim(Reciprocal, span))) => vec![impls::perv_monad(
+            "tosa.reciprocal",
+            comp_node,
+            &deps,
+            *span,
+            block,
+            fctx,
+            ctx,
+        )?],
+        Op::Data(Data::Node(Node::Prim(Abs, span))) => {
+            vec![impls::perv_monad(
+                "tosa.abs", comp_node, &deps, *span, block, fctx, ctx,
+            )?]
+        }
+        Op::Data(Data::Node(Node::Prim(Sqrt, span))) => {
+            vec![impls::perv_monad(
+                "math.sqrt",
+                comp_node,
+                &deps,
+                *span,
+                block,
+                fctx,
+                ctx,
+            )?]
+        }
+        Op::Data(Data::Node(Node::Prim(Exp, span))) => {
+            vec![impls::perv_monad(
+                "math.exp", comp_node, &deps, *span, block, fctx, ctx,
+            )?]
+        }
+        Op::Data(Data::Node(Node::Prim(Sin, span))) => {
+            vec![impls::perv_monad(
+                "math.sin", comp_node, &deps, *span, block, fctx, ctx,
+            )?]
+        }
+        Op::Data(Data::Node(Node::Prim(Floor, span))) => todo!(),
+        Op::Data(Data::Node(Node::Prim(Ceil, span))) => todo!(),
+        Op::Data(Data::Node(Node::Prim(Round, span))) => todo!(),
+
+        // -- Dyadic Pervasive Functions --
         Op::Data(Data::Node(Node::Prim(Add, span))) => {
-            vec![add(idx, &deps, *span, block, fctx, ctx)?]
+            vec![impls::arith(
+                "tosa.add", comp_node, &deps, *span, block, fctx, ctx,
+            )?]
+        }
+        Op::Data(Data::Node(Node::Prim(Sub, span))) => {
+            vec![impls::arith(
+                "tosa.sub", comp_node, &deps, *span, block, fctx, ctx,
+            )?]
+        }
+        Op::Data(Data::Node(Node::Prim(Mul, span))) => {
+            vec![impls::arith(
+                "tosa.mul", comp_node, &deps, *span, block, fctx, ctx,
+            )?]
+        }
+        // FIXME: `arith` elementwise ops don't support fixing
+        Op::Data(Data::Node(Node::Prim(Div, span))) => {
+            vec![impls::arith(
+                "arith.divf",
+                comp_node,
+                &deps,
+                *span,
+                block,
+                fctx,
+                ctx,
+            )?]
+        }
+
+        // -- Monadic Array Functions --
+        Op::Data(Data::Node(Node::Prim(Range, span))) => {
+            vec![impls::range(comp_node, &deps, *span, block, fctx, ctx)?]
         }
 
         Op::Data(Data::Node(Node::Prim(Sys(SysOp::Print), span))) => {
@@ -337,143 +422,13 @@ fn mk_type<'c>(info: &ValInfo, ctx: CompileContext<'c, '_>) -> Type<'c> {
     mk_type_from_comp_shape(&comp_type, &info.shape, ctx)
 }
 
-/// Returns `ValInfo`s and `Value`s for the dependencies at the given indices
-fn get_deps<'c, 'a, 'cg>(
-    deps: &[(NodeIndex, usize)],
-    compile_graph: &'cg FuncCompileGraph<'c, 'a, '_>,
-) -> (Vec<&'cg ValInfo>, Vec<Value<'c, 'a>>) {
-    deps.iter()
-        .map(|&(dep_idx, out_i)| {
-            let node = &compile_graph.node_weight(dep_idx).unwrap();
-            (
-                &node.0.info.vals[out_i],
-                node.1.as_ref().expect("Argument not compiled")[out_i],
-            )
-        })
-        .unzip()
-}
-
 // -- separate file? --
 
-fn constant<'c, 'a>(
-    value: &uiua::Value,
-    block: &'a Block<'c>,
-    ctx: CompileContext<'c, '_>,
-) -> Result<Value<'c, 'a>> {
-    let loc = Location::unknown(ctx.context);
-
-    let info = ValInfo::from_value(value.clone());
-    let elem_type = mk_elem_type(&CompType::from_info(&info), ctx);
-
-    let elem_attrs = if info.range.float
-        && let Some(num_arr) = value.as_num_array()
-    {
-        num_arr
-            .elements()
-            .map(|&elem| FloatAttribute::new(ctx.context, elem_type, elem).into())
-            .collect_vec()
-    } else if let Some(ints) = value
-        .as_num_array()
-        .map(|arr| arr.elements().map(|&float| float as i64).collect_vec())
-        .or_else(|| {
-            value
-                .as_byte_array()
-                .map(|arr| arr.elements().map(|&byte| byte as i64).collect_vec())
-        })
-        .or_else(|| {
-            value
-                .as_char_array()
-                .map(|arr| arr.elements().map(|&byte| byte as i64).collect_vec())
-        })
-    {
-        ints.into_iter()
-            .map(|elem| IntegerAttribute::new(elem_type, elem).into())
-            .collect_vec()
-    } else {
-        unimplemented!()
-    };
-
-    let val_type = mk_tensor_type(&info.shape, elem_type);
-    let dense_attr = DenseElementsAttribute::new(val_type, &elem_attrs)?;
-
-    let op = arith::constant(ctx.context, val_type, dense_attr.into(), loc);
-    Ok(block.append_operation(op.into()).result(0)?.into())
-}
-
-fn call<'c, 'a, 'u>(
-    idx: NodeIndex,
-    deps: &Stack,
-    span: usize,
-    block: &'a Block<'c>,
-    fctx: &mut FuncCompileContext<'c, 'a, 'u, '_, '_, '_>,
-    ctx: CompileContext<'c, 'u>,
-) -> Result<Vec<Value<'c, 'a>>> {
-    let loc = span_to_loc(span, ctx);
-    let comp_node = &fctx.compile_graph.node_weight(idx).unwrap().0;
-    let analyzed_func = &fctx.funclib.funcs[comp_node.info.subfunc_idxs[0]];
-    let func_name = name_mangle(analyzed_func)?;
-    let ref_attr = FlatSymbolRefAttribute::new(ctx.context, &func_name);
-    let args = deps
-        .iter()
-        .map(|&(idx, out_i)| {
-            fctx.compile_graph
-                .node_weight(idx)
-                .and_then(|(_, v)| v.as_ref()?.get(out_i).copied())
-        })
-        .collect::<Option<Vec<_>>>()
-        .expect("Argument missing from compile graph");
-
-    let out_types = comp_node
-        .info
-        .vals
-        .iter()
-        .map(|out_info| mk_type(out_info, ctx))
-        .collect_vec();
-
-    let op = func::call(ctx.context, ref_attr, &args, &out_types, loc);
-    let op_ref = block.append_operation(op);
-    (0..out_types.len())
-        .map(|i| op_ref.result(i).map(Into::into).map_err(Into::into))
-        .collect::<Result<_>>()
-}
-
-fn upcast_num<'c, 'a, 'u>(
-    cast: Cast,
-    idx: NodeIndex,
-    deps: &Stack,
-    span: usize,
-    block: &'a Block<'c>,
-    fctx: &mut FuncCompileContext<'c, 'a, 'u, '_, '_, '_>,
-    ctx: CompileContext<'c, 'u>,
-) -> Result<Value<'c, 'a>> {
-    let loc = span_to_loc(span, ctx);
-    let (_dep_infos, dep_vals) = get_deps(deps, fctx.compile_graph);
-    let dep_val = dep_vals[0];
-
-    let out_node = &fctx.compile_graph.node_weight(idx).unwrap().0;
-    let out_comp_type = &out_node.types[0];
-    let out_shape = &out_node.info.vals[0].shape;
-    let out_type = mk_type_from_comp_shape(out_comp_type, out_shape, ctx);
-
-    let op_name = match cast {
-        Cast::UInt => "arith.extui",
-        Cast::SInt => "arith.extsi",
-        Cast::UtoF => "arith.uitofp",
-        Cast::StoF => "arith.sitofp",
-    };
-    let op = OperationBuilder::new(op_name, loc)
-        .add_results(&[out_type])
-        .add_operands(&[dep_val])
-        .build()?;
-
-    Ok(block.append_operation(op).result(0)?.into())
-}
-
 fn print<'c, 'a, 'u>(
-    deps: &Stack,
+    deps: StackSlice,
     span: usize,
     block: &'a Block<'c>,
-    fctx: &mut FuncCompileContext<'c, 'a, 'u, '_, '_, '_>,
+    fctx: &FuncCompileContext<'c, 'a, 'u, '_, '_, '_>,
     ctx: CompileContext<'c, 'u>,
 ) -> Result<()> {
     let loc = span_to_loc(span, ctx);
@@ -516,34 +471,6 @@ fn print<'c, 'a, 'u>(
         .and_then(|v| v.get(arg_out_i))
         .expect("Argument not compiled");
 
-    let flat_shape_type = RankedTensorType::new(&[1], ctx.index_type, None).into();
-    let flat_shape_val: Value = block
-        .append_operation(
-            arith::constant(
-                ctx.context,
-                flat_shape_type,
-                DenseElementsAttribute::new(
-                    flat_shape_type,
-                    &[IntegerAttribute::new(ctx.index_type, len as i64).into()],
-                )?
-                .into(),
-                loc,
-            )
-            .into(),
-        )
-        .result(0)?
-        .into();
-
-    let deshape_op = tensor::reshape(
-        ctx.context,
-        deshaped_type.into(),
-        arg_val,
-        flat_shape_val,
-        loc,
-    );
-
-    let deshaped_val: Value = block.append_operation(deshape_op.into()).result(0)?.into();
-
     let zero_val: Value = block
         .append_operation(
             arith::constant(
@@ -569,6 +496,83 @@ fn print<'c, 'a, 'u>(
         .result(0)?
         .into();
 
+    let flat_shape_type = RankedTensorType::new(&[1], ctx.index_type, None).into();
+    let flat_shape_val: Value = if len == DYN_AX {
+        let rank = arg_info
+            .shape
+            .rank()
+            .context("Cannot print unranked tensor")?;
+        let rank_val: Value = block
+            .append_operation(
+                arith::constant(
+                    ctx.context,
+                    ctx.index_type,
+                    IntegerAttribute::new(ctx.index_type, rank as i64).into(),
+                    loc,
+                )
+                .into(),
+            )
+            .result(0)?
+            .into();
+
+        let for_block = Block::new(&[(ctx.index_type, loc); 2]);
+        let dim_i_val: Value = for_block.argument(0)?.into();
+        let dim_op = tensor::dim(ctx.context, ctx.index_type, arg_val, dim_i_val, loc);
+        let dim_val: Value = for_block.append_operation(dim_op.into()).result(0)?.into();
+        let old_size_val: Value = for_block.argument(1)?.into();
+        let mul_op = index::mul(old_size_val, dim_val, loc);
+        let new_size_val: Value = for_block.append_operation(mul_op).result(0)?.into();
+        for_block.append_operation(scf::r#yield(ctx.context, &[new_size_val], loc).into());
+        let for_region = Region::new();
+        for_region.append_block(for_block);
+        let for_op = scf::r#for(
+            ctx.context,
+            &[ctx.index_type],
+            zero_val,
+            rank_val,
+            one_val,
+            &[one_val],
+            for_region,
+            loc,
+        );
+
+        let size_val: Value = block.append_operation(for_op.into()).result(0)?.into();
+
+        block
+            .append_operation(
+                tensor::from_elements(ctx.context, flat_shape_type, &[size_val], loc).into(),
+            )
+            .result(0)?
+            .into()
+    } else {
+        block
+            .append_operation(
+                arith::constant(
+                    ctx.context,
+                    flat_shape_type,
+                    DenseElementsAttribute::new(
+                        flat_shape_type,
+                        &[IntegerAttribute::new(ctx.index_type, len as i64).into()],
+                    )?
+                    .into(),
+                    loc,
+                )
+                .into(),
+            )
+            .result(0)?
+            .into()
+    };
+
+    let deshape_op = tensor::reshape(
+        ctx.context,
+        deshaped_type.into(),
+        arg_val,
+        flat_shape_val,
+        loc,
+    );
+
+    let deshaped_val: Value = block.append_operation(deshape_op.into()).result(0)?.into();
+
     let len_op = tensor::dim(ctx.context, ctx.index_type, deshaped_val, zero_val, loc);
     let len_val: Value = block.append_operation(len_op.into()).result(0)?.into();
 
@@ -584,14 +588,22 @@ fn print<'c, 'a, 'u>(
             let idx_val: Value = for_block.argument(0)?.into();
             let get_op = tensor::extract(ctx.context, elem_type, deshaped_val, &[idx_val], loc);
             let cur_val: Value = for_block.append_operation(get_op.into()).result(0)?.into();
-            let printf_op = func::call(
+
+            let mut print_op = llvm::call(
                 ctx.context,
-                FlatSymbolRefAttribute::new(ctx.context, print_func),
                 &[cur_val],
                 &[],
+                DenseI32ArrayAttribute::new(ctx.context, &[]),
                 loc,
             );
-            for_block.append_operation(printf_op);
+            print_op.set_callee(FlatSymbolRefAttribute::new(ctx.context, print_func));
+            let mut print_op: Operation = print_op.into();
+            print_op.set_attribute(
+                "operandSegmentSizes",
+                DenseI32ArrayAttribute::new(ctx.context, &[1, 0]).into(),
+            );
+
+            for_block.append_operation(print_op);
             for_block.append_operation(scf::r#yield(ctx.context, &[], loc).into());
             let region = Region::new();
             region.append_block(for_block);
@@ -602,35 +614,15 @@ fn print<'c, 'a, 'u>(
 
     block.append_operation(for_op.into());
 
-    let final_print_op = func::call(
+    let mut final_print_op = llvm::call(
         ctx.context,
-        FlatSymbolRefAttribute::new(ctx.context, "print_ln"),
         &[],
         &[],
+        DenseI32ArrayAttribute::new(ctx.context, &[]),
         loc,
     );
-    block.append_operation(final_print_op);
+    final_print_op.set_callee(FlatSymbolRefAttribute::new(ctx.context, "print_ln"));
+    block.append_operation(final_print_op.into());
 
     Ok(())
-}
-
-fn add<'c, 'a, 'u>(
-    idx: NodeIndex,
-    deps: &Stack,
-    span: usize,
-    block: &'a Block<'c>,
-    fctx: &mut FuncCompileContext<'c, 'a, 'u, '_, '_, '_>,
-    ctx: CompileContext<'c, 'u>,
-) -> Result<Value<'c, 'a>> {
-    let loc = span_to_loc(span, ctx);
-
-    let (_dep_infos, dep_vals) = get_deps(deps, fctx.compile_graph);
-    let (lhs_val, rhs_val) = (dep_vals[0], dep_vals[1]);
-
-    let out_info = &fctx.compile_graph.node_weight(idx).unwrap().0.info.vals[0];
-    let out_type = mk_type(out_info, ctx);
-
-    let op = tosa::add(ctx.context, out_type, lhs_val, rhs_val, loc);
-
-    Ok(block.append_operation(op.into()).result(0)?.into())
 }

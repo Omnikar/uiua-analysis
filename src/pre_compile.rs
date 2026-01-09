@@ -30,7 +30,7 @@ pub struct CompNode<'u> {
 #[derive(Clone, PartialEq, Eq)]
 pub enum CompType {
     /// bool: Signed?
-    /// u8: 8, 16, 32, or 64 bits?
+    /// 0-3: 8, 16, 32, or 64 bits?
     Int(bool, u8),
     /// bool: Double precision?
     Float(bool),
@@ -52,8 +52,10 @@ pub enum Impl {
 
 #[derive(Debug, Clone, Copy)]
 pub enum Cast {
-    UInt,
-    SInt,
+    UUp,
+    SUp,
+    UDown,
+    SDown,
     UtoF,
     StoF,
 }
@@ -83,6 +85,15 @@ impl CompType {
                 val_info.range.signed,
                 int_type_idx(val_info.range.extent, val_info.range.signed),
             )
+        }
+    }
+
+    pub fn bit_width(&self) -> u8 {
+        match self {
+            CompType::Int(_, i) => [8, 16, 32, 64][*i as usize],
+            CompType::Float(d) => [32, 64][*d as usize],
+            CompType::Bool => 1,
+            CompType::Char => 32,
         }
     }
 }
@@ -132,13 +143,25 @@ impl<'u> Op<'u> {
 }
 
 impl Cast {
-    fn from_types(from: &CompType, to: &CompType) -> Self {
+    fn from_types(from: &CompType, to: &CompType) -> Option<Self> {
+        use Cast::*;
         match (from, to) {
-            (CompType::Int(false, _), CompType::Int(_, _))
-            | (CompType::Bool, CompType::Int(_, _)) => Cast::UInt,
-            (CompType::Int(true, _), CompType::Int(_, _)) => Cast::SInt,
-            (CompType::Int(false, _), CompType::Float(_)) => Cast::UtoF,
-            (CompType::Int(true, _), CompType::Float(_)) => Cast::StoF,
+            (CompType::Int(false, l), CompType::Int(_, r)) if r > l => Some(UUp),
+            (CompType::Int(false, l), CompType::Int(_, r)) if r < l => Some(UDown),
+            (CompType::Bool, CompType::Int(_, _)) => Some(UUp),
+            (CompType::Int(true, l), CompType::Int(_, r)) if r > l => Some(SUp),
+            (CompType::Int(true, l), CompType::Int(_, r)) if r < l => Some(SDown),
+            (CompType::Int(_, l), CompType::Int(_, r)) if l == r => None,
+
+            (CompType::Int(false, _), CompType::Float(_)) => Some(UtoF),
+            (CompType::Int(true, _), CompType::Float(_)) => Some(StoF),
+
+            (CompType::Char, CompType::Int(_, 3)) => Some(UUp),
+            (CompType::Char, CompType::Int(_, 0..2)) => Some(UDown),
+            (CompType::Char, CompType::Int(_, 2)) => None,
+            (CompType::Int(_, 0..2), CompType::Char) => Some(UUp),
+            (CompType::Int(_, 3), CompType::Char) => Some(UDown),
+            (CompType::Int(_, 2), CompType::Char) => None,
             _ => todo!(),
         }
     }
@@ -146,8 +169,10 @@ impl Cast {
 impl From<Cast> for &'static str {
     fn from(cast: Cast) -> Self {
         match cast {
-            Cast::UInt => "arith.extui",
-            Cast::SInt => "arith.extsi",
+            Cast::UUp => "arith.extui",
+            Cast::SUp => "arith.extsi",
+            Cast::UDown => "arith.trunci",
+            Cast::SDown => "arith.trunci",
             Cast::UtoF => "arith.uitofp",
             Cast::StoF => "arith.sitofp",
         }
@@ -248,7 +273,13 @@ fn prepare_node<'u, 'ag>(
         data @ Data::Node(Node::Prim(Add, span))
         | data @ Data::Node(Node::Prim(Sub, span))
         | data @ Data::Node(Node::Prim(Mul, span))
-        | data @ Data::Node(Node::Prim(Div, span)) => match_arith_types(data, *span, ctx),
+        | data @ Data::Node(Node::Prim(Div, span))
+        | data @ Data::Node(Node::Prim(Not, span))
+        | data @ Data::Node(Node::Prim(Neg, span))
+        | data @ Data::Node(Node::Prim(Reciprocal, span))
+        | data @ Data::Node(Node::Prim(Sqrt, span))
+        | data @ Data::Node(Node::Prim(Exp, span))
+        | data @ Data::Node(Node::Prim(Sin, span)) => match_arith_types(data, *span, ctx),
         data => add_node(data, ctx),
     }
 }
@@ -304,8 +335,10 @@ fn match_arith_types<'u, 'ag>(
     for ((dep_idx, dep_out_i), dep_info) in ctx.dep_idxs.iter_mut().zip(ctx.dep_infos) {
         let dep_type = CompType::from_info(dep_info);
         // TODO: Handle characters
-        if dep_type != out_type {
-            let cast_op = Op::Impl(Impl::Cast(Cast::from_types(&dep_type, &out_type)), span);
+        if dep_type != out_type
+            && let Some(cast) = Cast::from_types(&dep_type, &out_type)
+        {
+            let cast_op = Op::Impl(Impl::Cast(cast), span);
             let node_info = NodeInfo {
                 vals: smallvec![dep_info.clone()],
                 subfunc_idxs: vec![],
@@ -330,8 +363,5 @@ fn match_arith_types<'u, 'ag>(
 fn int_type_idx(extent: u64, signed: bool) -> u8 {
     let x = extent;
     let s = signed as u32;
-    // (x.max(2).ilog2() + s).ilog2().saturating_sub(2).min(3) as u8
-
-    // This uses one step higher than necessary whenever signed integers exist in order to avoid conversions from equally sized unsigned integers
-    ((x.max(2).ilog2() + s).ilog2().saturating_sub(2) + s).min(3) as u8
+    (x.max(2).ilog2() + s).ilog2().saturating_sub(2).min(3) as u8
 }

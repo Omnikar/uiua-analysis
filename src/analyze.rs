@@ -749,7 +749,7 @@ fn analyze_node<'u>(
         // -- Not yet categorized --
         Data::Node(Node::Prim(Sys(uiua::SysOp::Print), _span)) => NodeInfo::no_vals(),
 
-        _ => todo!(),
+        _ => todo!("{data:?}"),
     };
 
     info_graph.node_weight_mut(idx).unwrap().1 = Some(info);

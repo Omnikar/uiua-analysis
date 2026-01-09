@@ -110,6 +110,7 @@ pub fn sign(ctx: AnalyzeCtx) -> Result<NodeInfo> {
         dep_info.shape = Known(val.sign(ctx.uiua)?);
     }
     dep_info.range.extent = 1;
+    dep_info.range.float = false;
     Ok(NodeInfo::one_val(dep_info))
 }
 
@@ -139,7 +140,8 @@ pub fn abs(ctx: AnalyzeCtx) -> Result<NodeInfo> {
     if let Known(val) = dep_info.shape {
         dep_info.shape = Known(val.abs(ctx.uiua)?);
     }
-    dep_info.range.signed = false;
+    // TODO: Handle this properly
+    // dep_info.range.signed = false;
     Ok(NodeInfo::one_val(dep_info))
 }
 
@@ -480,7 +482,7 @@ pub fn range(ctx: AnalyzeCtx) -> Result<NodeInfo> {
             } else {
                 bail!("Range max should be a single integer or a list of integers, but its rank is {}", shape.len());
             };
-            (shape, RangeInfo::nat())
+            (shape, RangeInfo::nat().signed(dep_info.range.signed))
         }
         Unranked {
             mut prefix,
@@ -510,7 +512,7 @@ pub fn range(ctx: AnalyzeCtx) -> Result<NodeInfo> {
                     prefix: SymShape::new(),
                     suffix: smallvec![len],
                 },
-                RangeInfo::nat(),
+                RangeInfo::nat().signed(dep_info.range.signed),
             )
         }
     };
@@ -826,17 +828,10 @@ pub fn r#where(ctx: AnalyzeCtx) -> Result<NodeInfo> {
         Ranked(shape) => {
             if shape.len() <= 1 {
                 let shape_info = Ranked(smallvec![Axis::newvar(ctx.nvars)]);
-                let range = if let Some(len) = shape.first() {
-                    RangeInfo::try_index(len.only_const())
-                } else {
-                    RangeInfo::zero()
-                };
-                (shape_info, range)
+                (shape_info, RangeInfo::index())
             } else {
                 let shape_info = Ranked(smallvec![Axis::newvar(ctx.nvars), shape.len().into()]);
-                let extent: Option<isize> = shape.iter().map(|ax| ax.only_const()).max().flatten();
-                let range = RangeInfo::try_index(extent);
-                (shape_info, range)
+                (shape_info, RangeInfo::index())
             }
         }
         Unranked { .. } => (
