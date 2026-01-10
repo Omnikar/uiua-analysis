@@ -27,3 +27,9 @@ Once this is done, you can run `./build.sh` to create viewable images of the gen
 Note that this assumes you have the following utilities installed:
 - Graphviz: `dot`
 - MLIR/LLVM: `clang`, `llvm-config`, `llc`, `mlir-opt`, `mlir-translate`
+
+Below is an example data graph output based on the following prime number generator code. The tuple attached to each edge of the graph represents respectively the index of the corresponding value in the outputs of the node it came from, and the index that the value occupies in the inputs of the function it is used by, so a `(0,1)` edge represents the 0th output of one function becoming the 1st input of another. The edges of the graph represent the order of dependency, which means that they point opposite to the direction that data actually flows.
+```uiua
+▽¬⊸∊♭⊸˙⊞×+1↘1⇡ 31
+```
+![A graph of the flow of data through the prime number generator program](example-data-graph.png)
