@@ -6,12 +6,13 @@ mod pre_compile;
 // mod compile_experiment;
 // mod compile_experiment_2;
 
+use anyhow::Result;
 use itertools::Itertools;
 use petgraph::{graph::NodeIndex, Graph};
 use std::collections::HashSet;
 use std::io::Write;
 
-fn main() {
+fn main() -> Result<()> {
     // dbg!(std::mem::size_of::<graph::Data>());
     // dbg!(std::mem::size_of::<graph::Stack>());
     // dbg!(std::mem::size_of::<graph::DataGraph>());
@@ -31,11 +32,9 @@ fn main() {
     let mut uiua = uiua::Uiua::with_native_sys();
     uiua.asm = asm;
 
-    // compile_experiment::test(&uiua.asm);
-    // compile_experiment_2::compile_test(&uiua).unwrap();
-    compile::compile_test(&uiua).unwrap();
+    analyze_test(&uiua)?;
+    compile::compile_test(&uiua)?;
 
-    // analyze_test(&uiua);
     // use analyze::axis::Axis;
     // let mut nvars = 0;
     // let x0 = Axis::newvar(&mut nvars);
@@ -68,76 +67,29 @@ fn main() {
     // writeln!(f, r#"    node [fontname="Uiua386"]"#).unwrap();
     // writeln!(f, r#"    edge [fontname="Uiua386"]"#).unwrap();
     // write!(f, "{s}").unwrap();
+
+    Ok(())
 }
 
-fn analyze_test(uiua: &uiua::Uiua) {
-    use {
-        analyze::{axis::Axis, ShapeInfo},
-        smallvec::smallvec,
-    };
+fn analyze_test(uiua: &uiua::Uiua) -> Result<()> {
     let data_graph = graph::DataGraph::from_node(&uiua.asm.root, &uiua.asm).unwrap();
-    dbg!(&data_graph);
-    // let shape = [2, 3].map(analyze::axis::Axis::from).into_iter().collect();
-    // let mut nvars = 0;
-    // let shape = smallvec![
-    //     Axis::newvar(&mut nvars),
-    //     Axis::newvar(&mut nvars),
-    //     // Axis::newvar(&mut nvars),
-    // ];
-    // let shape2 = smallvec![
-    //     Axis::newvar(&mut nvars),
-    //     // Axis::from(1),
-    //     // Axis::newvar(&mut nvars),
-    //     Axis::newvar(&mut nvars),
-    // ];
-    // let shape3 = smallvec![
-    //     Axis::newvar(&mut nvars),
-    //     Axis::from(3),
-    //     Axis::newvar(&mut nvars),
-    // ];
-    // let shape2 = [4, 5].map(analyze::axis::Axis::from).into_iter().collect();
-    let arg_infos = &[
-        // analyze::Info {
-        //     typ: 0,
-        //     shape: ShapeInfo::Known([1, 2, 3].into()),
-        //     // shape: ShapeInfo::Ranked(shape),
-        //     // shape: ShapeInfo::Unranked {
-        //     //     prefix: shape,
-        //     //     suffix: shape2,
-        //     // },
-        // },
-        // analyze::Info::new(0, ShapeInfo::Ranked(shape)),
-        // analyze::Info::new(0, ShapeInfo::Ranked(shape2)),
-        // analyze::Info::new(0, ShapeInfo::Ranked(shape3)),
-    ];
+
+    let mut f = std::fs::File::create("build/data-graph.dot").unwrap();
+    let s = format!("{:?}", petgraph::dot::Dot::new(&data_graph.graph));
+    let s = s.strip_prefix("digraph {\n").unwrap();
+    writeln!(f, "digraph {{").unwrap();
+    writeln!(f, "    node [shape=box]").unwrap();
+    writeln!(f, r#"    node [fontname="Uiua386"]"#).unwrap();
+    writeln!(f, r#"    edge [fontname="Uiua386"]"#).unwrap();
+    write!(f, "{s}").unwrap();
+
+    let arg_infos = &[];
     let infos =
-        analyze::analyze_func_graph(&data_graph, arg_infos, &mut analyze::FuncLib::new(), uiua)
-            .unwrap();
-    dbg!(&infos);
-    for req in &infos.reqs {
-        match req {
-            analyze::axis::Condition::Or(rels) => {
-                for rel in rels {
-                    println!(
-                        "{} {} 0",
-                        rel.expr,
-                        match (rel.ineq, rel.inv) {
-                            (false, false) => '=',
-                            (true, false) => '>',
-                            (false, true) => '≠',
-                            (true, true) => '≤',
-                        }
-                    );
-                }
-            }
-        }
-    }
+        analyze::analyze_func_graph(&data_graph, arg_infos, &mut analyze::FuncLib::new(), uiua)?;
 
     let prepared = pre_compile::prepare_graph(&data_graph, &infos.map, uiua);
-    dbg!(&prepared);
 
-    let mut f = std::fs::File::create("graph.dot").unwrap();
-    // let s = format!("{:?}", petgraph::dot::Dot::new(&data_graph.graph));
+    let mut f = std::fs::File::create("build/compile-graph.dot").unwrap();
     let s = format!("{:?}", petgraph::dot::Dot::new(&prepared.graph));
     let s = s.strip_prefix("digraph {\n").unwrap();
     writeln!(f, "digraph {{").unwrap();
@@ -145,6 +97,8 @@ fn analyze_test(uiua: &uiua::Uiua) {
     writeln!(f, r#"    node [fontname="Uiua386"]"#).unwrap();
     writeln!(f, r#"    edge [fontname="Uiua386"]"#).unwrap();
     write!(f, "{s}").unwrap();
+
+    Ok(())
 }
 
 fn test() {

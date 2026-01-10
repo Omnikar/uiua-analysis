@@ -90,7 +90,7 @@ pub fn compile_test(uiua: &uiua::Uiua) -> Result<()> {
 
     assert!(module.as_operation().verify());
 
-    let mut f = std::fs::File::create("mlir-test/test.mlir")?;
+    let mut f = std::fs::File::create("build/test.mlir")?;
     write!(f, "{}", module.as_operation())?;
 
     Ok(())

@@ -962,7 +962,7 @@ pub fn r#gen(ctx: AnalyzeCtx) -> Result<NodeInfo> {
     todo!()
 }
 
-// -- _________ Modifiers --
+// -- Mapping Modifiers --
 
 pub fn rows<'u>(funcs: &'u [SigNode], ctx: AnalyzeCtx<'_, '_, '_, '_, 'u>) -> Result<NodeInfo> {
     let func = &funcs[0].node;

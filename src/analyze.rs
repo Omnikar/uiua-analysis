@@ -739,7 +739,7 @@ fn analyze_node<'u>(
         // -- Misc Functions --
         Data::Node(Node::Prim(Rand, _span)) => impls::rand(ctx)?,
 
-        // -- _________ Modifiers --
+        // -- Mapping Modifiers --
         Data::Node(Node::Mod(Rows, funcs, _span)) => impls::rows(funcs, ctx)?,
         Data::Node(Node::Mod(Table, funcs, _span)) => impls::table(funcs, ctx)?,
 
