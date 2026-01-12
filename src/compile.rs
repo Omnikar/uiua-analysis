@@ -438,7 +438,10 @@ fn print<'c, 'a, 'u>(
     let comp_type = CompType::from_info(arg_info);
     let elem_type = mk_elem_type(&comp_type, ctx);
     let print_func = match comp_type {
-        CompType::Int(_, i) => ["print_i8", "print_i16", "print_i32", "print_i64"][i as usize],
+        CompType::Int(s, i) => [
+            ["print_u8", "print_u16", "print_u32", "print_u64"],
+            ["print_i8", "print_i16", "print_i32", "print_i64"],
+        ][s as usize][i as usize],
         CompType::Float(d) => {
             if d {
                 "print_f64"
