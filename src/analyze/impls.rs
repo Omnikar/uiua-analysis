@@ -458,9 +458,31 @@ pub fn range(ctx: AnalyzeCtx) -> Result<NodeInfo> {
             typ_name(dep_info.typ),
         );
     }
-    // TODO: Add an upper bound to the size of range which will be computed ahead of time?
     let (shape, range) = match dep_info.shape {
-        Known(value) => known(value.range(ctx.uiua)?),
+        Known(value) => {
+            let Some(arr) = value
+                .as_num_array()
+                .cloned()
+                .or_else(|| value.as_byte_array().cloned().map(|v| v.convert()))
+            else {
+                bail!("Cannot take range of {value}")
+            };
+            let num_elems = arr.elements().product::<f64>() as usize * arr.element_count();
+            // Don't pre-evaluate ranges that would include more than 10k elements
+            if num_elems < 10_000 {
+                known(value.range(ctx.uiua)?)
+            } else {
+                let shape = arr
+                    .elements()
+                    .map(|&n| n as usize)
+                    .chain((arr.rank() > 0).then_some(arr.element_count()))
+                    .map(Axis::from)
+                    .collect();
+                let extent = arr.elements().copied().map(|v| v as usize).max();
+                let range = RangeInfo::try_index(extent);
+                (Ranked(shape), range)
+            }
+        }
         Ranked(mut shape) => {
             let shape = if shape.is_empty() {
                 Ranked(smallvec![Axis::newvar(ctx.nvars)])
