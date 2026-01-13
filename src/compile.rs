@@ -311,6 +311,11 @@ fn compile_node<'c, 'a, 'u>(
             vec![impls::range(comp_node, &deps, *span, block, fctx, ctx)?]
         }
 
+        // -- Mapping Modifiers --
+        Op::Data(Data::Node(Node::Mod(Rows, _funcs, span))) => {
+            vec![impls::rows(comp_node, &deps, *span, block, fctx, ctx)?]
+        }
+
         Op::Data(Data::Node(Node::Prim(Sys(SysOp::Print), span))) => {
             print(&deps, *span, block, fctx, ctx)?;
             Vec::new()
