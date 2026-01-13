@@ -433,7 +433,9 @@ impl std::ops::Sub for RangeInfo {
     type Output = Self;
     fn sub(self, rhs: Self) -> Self {
         let mut range = self.max(rhs);
-        range.expand(self.extent.saturating_add(rhs.extent));
+        if self.signed || rhs.signed {
+            range.expand(self.extent.saturating_add(rhs.extent));
+        }
         range.signed(true)
     }
 }
