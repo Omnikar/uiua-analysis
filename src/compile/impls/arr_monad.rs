@@ -85,18 +85,7 @@ fn scalar_range<'c, 'a, 'u>(
         }
 
         if signed {
-            let zero_val: Value = block
-                .append_operation(
-                    arith::constant(
-                        ctx.context,
-                        dep_elem_type,
-                        IntegerAttribute::new(dep_elem_type, 0).into(),
-                        loc,
-                    )
-                    .into(),
-                )
-                .result(0)?
-                .into();
+            let zero_val = const_int(0, dep_elem_type, block, ctx, loc)?;
 
             let cmp_op = arith::cmpi(
                 ctx.context,
@@ -191,18 +180,7 @@ fn multidim_range<'c, 'a, 'u>(
         if dim != DYN_AX && !signed {
             continue;
         }
-        let dim_i_val: Value = block
-            .append_operation(
-                arith::constant(
-                    ctx.context,
-                    ctx.index_type,
-                    IntegerAttribute::new(ctx.index_type, dim_i as i64).into(),
-                    loc,
-                )
-                .into(),
-            )
-            .result(0)?
-            .into();
+        let dim_i_val = const_int(dim_i as i64, ctx.index_type, block, ctx, loc)?;
 
         let extract_op = tensor::extract(ctx.context, dep_elem_type, dep_val, &[dim_i_val], loc);
 
@@ -225,18 +203,7 @@ fn multidim_range<'c, 'a, 'u>(
         }
 
         if signed && dim_i < coord_len {
-            let zero_val: Value = block
-                .append_operation(
-                    arith::constant(
-                        ctx.context,
-                        dep_elem_type,
-                        IntegerAttribute::new(dep_elem_type, 0).into(),
-                        loc,
-                    )
-                    .into(),
-                )
-                .result(0)?
-                .into();
+            let zero_val = const_int(0, dep_elem_type, block, ctx, loc)?;
 
             let cmp_op = arith::cmpi(
                 ctx.context,

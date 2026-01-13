@@ -2,15 +2,19 @@ mod arr_monad;
 mod perv_dyad;
 mod perv_monad;
 
+mod map_mod;
+
 pub use arr_monad::*;
 pub use perv_dyad::*;
 pub use perv_monad::*;
 
-use anyhow::{Context as _, Result};
+pub use map_mod::*;
+
+use anyhow::{bail, Context as _, Result};
 use itertools::Itertools;
 use melior::{
     dialect::{
-        func, index,
+        cf, func, index,
         ods::{arith, tensor, tosa},
     },
     ir::{
@@ -25,8 +29,9 @@ use melior::{
 use petgraph::graph::NodeIndex;
 
 use super::{
-    dims_from_shape_info, mk_elem_type, mk_tensor_type, mk_type, mk_type_from_comp_shape,
-    name_mangle, span_to_loc, CompileContext, FuncCompileContext, FuncCompileGraph, DYN_AX,
+    const_int, dims_from_shape_info, mk_elem_type, mk_tensor_type, mk_type,
+    mk_type_from_comp_shape, name_mangle, span_to_loc, CompileContext, FuncCompileContext,
+    FuncCompileGraph, DYN_AX,
 };
 use crate::{
     analyze::{ShapeInfo, ValInfo},
@@ -208,34 +213,12 @@ fn enforce_min_rank<'c, 'a>(
         .result(0)?
         .into();
     for (dim_i, &dim) in shape.iter().enumerate() {
-        let dim_i_val: Value = block
-            .append_operation(
-                arith::constant(
-                    ctx.context,
-                    ctx.index_type,
-                    IntegerAttribute::new(ctx.index_type, dim_i as i64).into(),
-                    loc,
-                )
-                .into(),
-            )
-            .result(0)?
-            .into();
+        let dim_i_val = const_int(dim_i as i64, ctx.index_type, block, ctx, loc)?;
         let dim_val: Value = if dim == DYN_AX {
             let get_dim_op = tensor::dim(ctx.context, ctx.index_type, *val, dim_i_val, loc);
             block.append_operation(get_dim_op.into()).result(0)?.into()
         } else {
-            block
-                .append_operation(
-                    arith::constant(
-                        ctx.context,
-                        ctx.index_type,
-                        IntegerAttribute::new(ctx.index_type, dim as i64).into(),
-                        loc,
-                    )
-                    .into(),
-                )
-                .result(0)?
-                .into()
+            const_int(dim as i64, ctx.index_type, block, ctx, loc)?
         };
         let insert_op = tensor::insert(
             ctx.context,

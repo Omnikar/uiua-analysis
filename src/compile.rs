@@ -155,18 +155,7 @@ fn compile_func<'c>(
             .collect::<Option<Vec<_>>>()
             .context("Did not compile required node")?
     } else {
-        vec![block
-            .append_operation(
-                arith::constant(
-                    ctx.context,
-                    ctx.index_type,
-                    IntegerAttribute::new(ctx.index_type, 0).into(),
-                    loc,
-                )
-                .into(),
-            )
-            .result(0)?
-            .into()]
+        vec![const_int(0, ctx.index_type, &block, ctx, loc)?]
     };
     block.append_operation(func::r#return(&outs, loc));
 
@@ -396,6 +385,28 @@ fn dims_from_shape_info(info: &ShapeInfo) -> Vec<u64> {
     }
 }
 
+fn const_int<'a, 'c>(
+    val: i64,
+    typ: Type<'c>,
+    block: &'a Block<'c>,
+    ctx: CompileContext<'c, '_>,
+    loc: Location<'c>,
+) -> Result<Value<'c, 'a>> {
+    block
+        .append_operation(
+            arith::constant(
+                ctx.context,
+                typ,
+                IntegerAttribute::new(typ, val).into(),
+                loc,
+            )
+            .into(),
+        )
+        .result(0)
+        .map(Into::into)
+        .map_err(Into::into)
+}
+
 fn mk_elem_type<'c>(comp_type: &CompType, ctx: CompileContext<'c, '_>) -> Type<'c> {
     match comp_type {
         CompType::Int(_, i) => ctx.int_types[*i as usize],
@@ -474,30 +485,8 @@ fn print<'c, 'a, 'u>(
         .and_then(|v| v.get(arg_out_i))
         .expect("Argument not compiled");
 
-    let zero_val: Value = block
-        .append_operation(
-            arith::constant(
-                ctx.context,
-                ctx.index_type,
-                IntegerAttribute::new(ctx.index_type, 0).into(),
-                loc,
-            )
-            .into(),
-        )
-        .result(0)?
-        .into();
-    let one_val: Value = block
-        .append_operation(
-            arith::constant(
-                ctx.context,
-                ctx.index_type,
-                IntegerAttribute::new(ctx.index_type, 1).into(),
-                loc,
-            )
-            .into(),
-        )
-        .result(0)?
-        .into();
+    let zero_val = const_int(0, ctx.index_type, block, ctx, loc)?;
+    let one_val = const_int(1, ctx.index_type, block, ctx, loc)?;
 
     let flat_shape_type = RankedTensorType::new(&[1], ctx.index_type, None).into();
     let flat_shape_val: Value = if len == DYN_AX {
@@ -505,18 +494,7 @@ fn print<'c, 'a, 'u>(
             .shape
             .rank()
             .context("Cannot print unranked tensor")?;
-        let rank_val: Value = block
-            .append_operation(
-                arith::constant(
-                    ctx.context,
-                    ctx.index_type,
-                    IntegerAttribute::new(ctx.index_type, rank as i64).into(),
-                    loc,
-                )
-                .into(),
-            )
-            .result(0)?
-            .into();
+        let rank_val = const_int(rank as i64, ctx.index_type, block, ctx, loc)?;
 
         let for_block = Block::new(&[(ctx.index_type, loc); 2]);
         let dim_i_val: Value = for_block.argument(0)?.into();
