@@ -31,8 +31,13 @@ pub fn extract_memref<'a, T>(memref: FfiUnrankedMemRef) -> ArrayRef<'a, T> {
     let strides_ptr = unsafe { shape_ptr.add(memref.rank) };
     let strides = unsafe { slice::from_raw_parts(strides_ptr, memref.rank) };
 
-    let elem_count: usize = shape.iter().copied().product();
-    let data = unsafe { slice::from_raw_parts(descr.aligned, elem_count) };
+    let data_len = shape
+        .iter()
+        .zip(strides)
+        .map(|(&len, &stride)| stride * (len - 1))
+        .sum::<usize>()
+        + 1;
+    let data = unsafe { slice::from_raw_parts(descr.aligned, data_len) };
 
     ArrayRef {
         rank: memref.rank,
