@@ -147,7 +147,7 @@ pub fn cast_num<'c, 'a, 'u>(
 }
 
 /// Returns `ValInfo`s and `Value`s for the dependencies at the given indices
-fn get_deps<'c, 'a, 'cg>(
+pub fn get_deps<'c, 'a, 'cg>(
     deps: StackSlice,
     compile_graph: &'cg FuncCompileGraph<'c, 'a, '_>,
 ) -> (Vec<&'cg ValInfo>, Vec<Value<'c, 'a>>) {

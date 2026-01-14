@@ -1,4 +1,6 @@
 module {
+  // func.func private @example_func(memref<*xi8>) -> ()
+
   llvm.func @printf(!llvm.ptr<0>, ...) -> i32
   llvm.mlir.global internal constant @_ln_fmt("\n\00") : !llvm.array<2 x i8>
   llvm.mlir.global internal constant @_int_fmt("  %d\00") : !llvm.array<5 x i8>

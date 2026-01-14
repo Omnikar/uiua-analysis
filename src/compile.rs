@@ -5,7 +5,7 @@ use itertools::Itertools;
 use melior::{
     dialect::{
         func, index,
-        ods::{arith, llvm, scf, tensor},
+        ods::{arith, bufferization, llvm, memref, scf, tensor},
         DialectRegistry,
     },
     ir::{
@@ -14,7 +14,7 @@ use melior::{
             IntegerAttribute, StringAttribute, TypeAttribute,
         },
         operation::{OperationBuilder, OperationLike, OperationMutLike},
-        r#type::{FunctionType, RankedTensorType},
+        r#type::{FunctionType, MemRefType, RankedTensorType},
         *,
     },
     pass,
@@ -27,10 +27,11 @@ use uiua::{Node, Purity, SysOp};
 
 use crate::{
     analyze::{
-        analyze_func_graph, axis::Axis, AnalyzedFunc, FuncInfos, FuncLib, ShapeInfo, ValInfo,
+        analyze_func_graph, axis::Axis, AnalyzedFunc, FuncInfos, FuncLib, InfoMap, ShapeInfo,
+        ValInfo,
     },
     graph::{Data, DataGraph, Stack, StackSlice},
-    pre_compile::{prepare_graph, CompNode, CompType, Impl, Op},
+    pre_compile::{prepare_graph, CompNode, CompType, Impl, Op, PreCompileGraph},
 };
 
 /// The integer used to indicate a dynamic axis length to MLIR
@@ -318,6 +319,10 @@ fn compile_node<'c, 'a, 'u>(
 
         Op::Data(Data::Node(Node::Prim(Sys(SysOp::Print), span))) => {
             print(&deps, *span, block, fctx, ctx)?;
+            Vec::new()
+        }
+        Op::Data(Data::Node(Node::Prim(Sys(SysOp::Show), span))) => {
+            show(&deps, *span, block, fctx, ctx)?;
             Vec::new()
         }
         _ => todo!(),
@@ -609,6 +614,65 @@ fn print<'c, 'a, 'u>(
     );
     final_print_op.set_callee(FlatSymbolRefAttribute::new(ctx.context, "print_ln"));
     block.append_operation(final_print_op.into());
+
+    Ok(())
+}
+
+fn show<'c, 'a, 'u>(
+    deps: StackSlice,
+    span: usize,
+    block: &'a Block<'c>,
+    fctx: &FuncCompileContext<'c, 'a, 'u, '_, '_, '_>,
+    ctx: CompileContext<'c, 'u>,
+) -> Result<()> {
+    let loc = span_to_loc(span, ctx);
+
+    let (dep_infos, dep_vals) = impls::get_deps(deps, fctx.compile_graph);
+    let (dep_info, dep_val) = (dep_infos[0], dep_vals[0]);
+
+    let dep_tensor_type = RankedTensorType::try_from(dep_val.r#type())?;
+    let elem_type = dep_tensor_type.element();
+
+    let dims = dims_from_shape_info(&dep_info.shape)
+        .into_iter()
+        .map(|x| x as i64)
+        .collect_vec();
+
+    let memref_type: Type = MemRefType::new(elem_type, &dims, None, None).into();
+
+    let to_buffer_op = bufferization::to_buffer(ctx.context, memref_type, dep_val, loc);
+
+    let null_attr = mlir_sys::MlirAttribute {
+        ptr: std::ptr::null(),
+    };
+    let unranked_memref_type = unsafe {
+        Type::from_raw(mlir_sys::mlirUnrankedMemRefTypeGet(
+            elem_type.to_raw(),
+            null_attr,
+        ))
+    };
+
+    let memref_val: Value = block
+        .append_operation(to_buffer_op.into())
+        .result(0)?
+        .into();
+
+    let memref_cast_op = memref::cast(ctx.context, unranked_memref_type, memref_val, loc);
+
+    let unranked_memref_val: Value = block
+        .append_operation(memref_cast_op.into())
+        .result(0)?
+        .into();
+
+    // let call_op = func::call(
+    //     ctx.context,
+    //     FlatSymbolRefAttribute::new(ctx.context, "example_func"),
+    //     &[unranked_memref_val],
+    //     &[],
+    //     loc,
+    // );
+
+    // block.append_operation(call_op);
 
     Ok(())
 }
