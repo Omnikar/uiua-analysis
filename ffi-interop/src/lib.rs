@@ -37,7 +37,7 @@ pub fn extract_memref<'a, T>(memref: FfiUnrankedMemRef) -> ArrayRef<'a, T> {
         .map(|(&len, &stride)| stride * (len - 1))
         .sum::<usize>()
         + 1;
-    let data = unsafe { slice::from_raw_parts(descr.aligned, data_len) };
+    let data = unsafe { slice::from_raw_parts(descr.aligned.add(descr.offset), data_len) };
 
     ArrayRef {
         rank: memref.rank,
