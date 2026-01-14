@@ -749,7 +749,11 @@ fn analyze_node<'u>(
         Data::Node(Node::Mod(Reduce, funcs, _span)) => impls::reduce(funcs, ctx)?,
 
         // -- Not yet categorized --
-        Data::Node(Node::Prim(Sys(uiua::SysOp::Print), _span)) => NodeInfo::no_vals(),
+        Data::Node(Node::Prim(prim, _span))
+            if prim.sig().map(|sig| sig.outputs() == 0).unwrap_or(false) =>
+        {
+            NodeInfo::no_vals()
+        }
 
         _ => todo!("{data:?}"),
     };
