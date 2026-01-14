@@ -2160,6 +2160,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "pretty-print"
+version = "0.1.0"
+dependencies = [
+ "ffi-interop",
+]
+
+[[package]]
 name = "prettyplease"
 version = "0.2.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
