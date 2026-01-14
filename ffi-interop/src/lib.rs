@@ -21,7 +21,9 @@ struct FfiMemRefDescriptorHeader<T> {
     rest: ffi::c_void,
 }
 
-pub fn extract_memref<'a, T>(memref: FfiUnrankedMemRef) -> ArrayRef<'a, T> {
+/// # Safety
+/// This operation requires the given struct to be a valid MLIR unranked memref
+pub unsafe fn extract_memref<'a, T>(memref: FfiUnrankedMemRef) -> ArrayRef<'a, T> {
     let descr_ptr = memref.descriptor as *const FfiMemRefDescriptorHeader<T>;
     let descr = unsafe { &*descr_ptr };
 
