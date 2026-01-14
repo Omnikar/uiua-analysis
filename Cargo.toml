@@ -3,10 +3,14 @@ name = "uiua-analysis"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+members = ["ffi-interop"]
+
 [dependencies]
 anyhow = "1.0.100"
 itertools = "0.14.0"
 melior = { version = "0.26.0", features = ["ods-dialects"] }
+mlir-sys = "210.0.1"
 petgraph = "0.8.3"
 smallvec = "1.15.1"
 uiua = { git = "https://github.com/uiua-lang/uiua" }

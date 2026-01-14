@@ -927,6 +927,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ffi-interop"
+version = "0.1.0"
+
+[[package]]
 name = "filetime"
 version = "0.2.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3244,6 +3248,7 @@ dependencies = [
  "anyhow",
  "itertools 0.14.0",
  "melior",
+ "mlir-sys",
  "petgraph",
  "smallvec",
  "uiua",
