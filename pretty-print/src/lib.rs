@@ -1,8 +1,10 @@
-use ffi_interop::{FfiUnrankedMemRef, extract_memref};
+use ffi_interop::{extract_memref, FfiUnrankedMemRef};
 
+/// # Safety
+/// The given struct must be a valid MLIR unranked memref
 #[unsafe(no_mangle)]
-pub extern "C" fn print_u8(memref: FfiUnrankedMemRef) {
-    let array_ref = extract_memref::<u8>(memref);
+pub unsafe extern "C" fn pretty_print_show_u8(memref: FfiUnrankedMemRef) {
+    let array_ref = unsafe { extract_memref::<u8>(memref) };
     println!("Array: ");
     for num in array_ref.data {
         print!(" {num} ");
