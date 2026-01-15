@@ -7,6 +7,8 @@ module {
   func.func private @pretty_print_show_i32(memref<*xi32>) -> ()
   func.func private @pretty_print_show_u64(memref<*xi64>) -> ()
   func.func private @pretty_print_show_i64(memref<*xi64>) -> ()
+  func.func private @pretty_print_show_f32(memref<*xf32>) -> ()
+  func.func private @pretty_print_show_f64(memref<*xf64>) -> ()
 
   llvm.func @printf(!llvm.ptr<0>, ...) -> i32
   llvm.mlir.global internal constant @_ln_fmt("\n\00") : !llvm.array<2 x i8>

@@ -709,6 +709,7 @@ fn show<'c, 'a, 'u>(
                 "f32"
             }
         }
+        // TODO: Idk
         CompType::Bool => "i1",
         CompType::Char => "i32",
     };
