@@ -77,7 +77,7 @@ impl<'a, T> ArrayRef<'a, T> {
 }
 
 fn base_conv(index: usize, bases: &[usize]) -> Vec<usize> {
-    bases
+    let mut out = bases
         .iter()
         .copied()
         .rev()
@@ -85,5 +85,7 @@ fn base_conv(index: usize, bases: &[usize]) -> Vec<usize> {
             digits.push(rem % base);
             (rem / base, digits)
         })
-        .1
+        .1;
+    out.reverse();
+    out
 }

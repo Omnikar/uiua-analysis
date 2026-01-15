@@ -1,4 +1,5 @@
-use ffi_interop::{ArrayRef, FfiUnrankedMemRef, extract_memref};
+use concat_idents::concat_idents;
+use ffi_interop::{extract_memref, ArrayRef, FfiUnrankedMemRef};
 
 fn show_num<T: std::fmt::Display>(arr: ArrayRef<T>) {
     if arr.rank == 0 {
@@ -36,13 +37,14 @@ fn show_num<T: std::fmt::Display>(arr: ArrayRef<T>) {
         for axis in &arr.shape[1..] {
             print!("×{axis}");
         }
-        print!(" ─ {}", std::any::type_name::<T>());
+        print!(" {}", std::any::type_name::<T>());
         for (i, row) in str_data.chunks(*arr.shape.last().unwrap()).enumerate() {
             for &val in &breakvals {
                 if i % val == 0 && (i != 0 || val == 1) {
                     println!()
                 }
             }
+            print!(" ");
             for num in row {
                 print!(" {num}");
             }
@@ -51,10 +53,20 @@ fn show_num<T: std::fmt::Display>(arr: ArrayRef<T>) {
     }
 }
 
-/// # Safety
-/// The given struct must be a valid MLIR unranked memref
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn pretty_print_show_u8(memref: FfiUnrankedMemRef) {
-    let array_ref = unsafe { extract_memref::<u8>(memref) };
-    show_num(array_ref);
+macro_rules! create_ffi_print_funcs {
+    ($($t:ty),+) => {
+        $(
+            concat_idents!(fn_name = pretty_print_show_, $t {
+                /// # Safety
+                /// The given struct must be a valid MLIR unranked memref
+                #[unsafe(no_mangle)]
+                pub unsafe extern "C" fn fn_name(memref: FfiUnrankedMemRef) {
+                    let array_ref = unsafe { extract_memref::<$t>(memref) };
+                    show_num(array_ref);
+                }
+            });
+        )+
+    };
 }
+
+create_ffi_print_funcs!(u8, i8, u16, i16, u32, i32, u64, i64, f32, f64);
