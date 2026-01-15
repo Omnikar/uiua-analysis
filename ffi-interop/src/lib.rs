@@ -48,3 +48,42 @@ pub unsafe fn extract_memref<'a, T>(memref: FfiUnrankedMemRef) -> ArrayRef<'a, T
         data,
     }
 }
+
+impl<'a, T> std::ops::Index<&[usize]> for ArrayRef<'a, T> {
+    type Output = T;
+
+    fn index(&self, index: &[usize]) -> &Self::Output {
+        let flatindex = index
+            .iter()
+            .zip(self.strides)
+            .map(|(&a, &b)| a * b)
+            .sum::<usize>();
+        &self.data[flatindex]
+    }
+}
+
+impl<'a, T> std::ops::Index<usize> for ArrayRef<'a, T> {
+    type Output = T;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self[&*base_conv(index, self.shape)]
+    }
+}
+
+impl<'a, T> ArrayRef<'a, T> {
+    pub fn elem_count(&self) -> usize {
+        self.shape.iter().copied().product()
+    }
+}
+
+fn base_conv(index: usize, bases: &[usize]) -> Vec<usize> {
+    bases
+        .iter()
+        .copied()
+        .rev()
+        .fold((index, Vec::new()), |(rem, mut digits), base| {
+            digits.push(rem % base);
+            (rem / base, digits)
+        })
+        .1
+}
