@@ -48,6 +48,9 @@ pub enum Op<'u> {
 #[derive(Debug, Clone)]
 pub enum Impl {
     Cast(Cast),
+    /// Treated analogously to uiua::SysOp::Show
+    /// Auto inserted for any values left on the stack at the end of a program
+    EndShow,
 }
 
 #[derive(Debug, Clone, Copy)]

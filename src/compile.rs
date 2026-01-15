@@ -13,7 +13,7 @@ use melior::{
             DenseElementsAttribute, DenseI32ArrayAttribute, FlatSymbolRefAttribute,
             IntegerAttribute, StringAttribute, TypeAttribute,
         },
-        operation::{OperationBuilder, OperationLike, OperationMutLike},
+        operation::{OperationLike, OperationMutLike},
         r#type::{FunctionType, MemRefType, RankedTensorType},
         *,
     },
@@ -21,17 +21,16 @@ use melior::{
     utility::register_all_dialects,
     Context,
 };
-use petgraph::{data::DataMap, graph::NodeIndex, stable_graph::StableGraph};
+use petgraph::{graph::NodeIndex, stable_graph::StableGraph};
 use std::io::Write;
 use uiua::{Node, Purity, SysOp};
 
 use crate::{
     analyze::{
-        analyze_func_graph, axis::Axis, AnalyzedFunc, FuncInfos, FuncLib, InfoMap, ShapeInfo,
-        ValInfo,
+        analyze_func_graph, axis::Axis, AnalyzedFunc, FuncInfos, FuncLib, ShapeInfo, ValInfo,
     },
     graph::{Data, DataGraph, Stack, StackSlice},
-    pre_compile::{prepare_graph, CompNode, CompType, Impl, Op, PreCompileGraph},
+    pre_compile::{prepare_graph, CompNode, CompType, Impl, Op},
 };
 
 /// The integer used to indicate a dynamic axis length to MLIR
@@ -110,7 +109,21 @@ fn compile_func<'c>(
         .map(|span| span_to_loc(span, ctx))
         .unwrap_or_else(|| Location::unknown(ctx.context));
 
-    let pre_compile_graph = prepare_graph(&func.graph, &func.infos.map, ctx.uiua);
+    let mut pre_compile_graph = prepare_graph(&func.graph, &func.infos.map, ctx.uiua);
+
+    // If this is the main function, then any leftover outputs get automatically connected to new pretty-print nodes in order to print them when the program ends
+    if func_name == "main" {
+        for (idx, out_i) in std::mem::replace(&mut pre_compile_graph.stack, Stack::new()) {
+            let comp_node = CompNode {
+                op: Op::Impl(Impl::EndShow, usize::MAX),
+                info: crate::analyze::NodeInfo::no_vals(),
+                types: smallvec::SmallVec::new(),
+            };
+            let new_idx = pre_compile_graph.graph.add_node(comp_node);
+            pre_compile_graph.graph.add_edge(new_idx, idx, (out_i, 0));
+        }
+    }
+
     let mut compile_graph = new_compile_graph(pre_compile_graph.graph, &[]);
 
     let mut sig_in = Vec::new();
@@ -332,8 +345,9 @@ fn compile_node<'c, 'a, 'u>(
             print(&deps, *span, block, fctx, ctx)?;
             Vec::new()
         }
-        Op::Data(Data::Node(Node::Prim(Sys(SysOp::Show), span))) => {
-            show(&deps, *span, block, fctx, ctx)?;
+        Op::Data(Data::Node(&Node::Prim(Sys(SysOp::Show), span)))
+        | Op::Impl(Impl::EndShow, span) => {
+            show(&deps, span, block, fctx, ctx)?;
             Vec::new()
         }
         _ => todo!(),
@@ -380,7 +394,8 @@ fn name_mangle(func: &AnalyzedFunc) -> Result<String> {
 }
 
 fn span_to_loc<'c>(span: usize, ctx: CompileContext<'c, '_>) -> Location<'c> {
-    if let Some(sp) = ctx.uiua.get_span(span).code()
+    if let Some(sp) = ctx.uiua.asm.spans.get(span).cloned()
+        && let Some(sp) = sp.code()
         && let uiua::InputSrc::File(path) = sp.src
         && let Some(path) = path.as_os_str().to_str()
     {
