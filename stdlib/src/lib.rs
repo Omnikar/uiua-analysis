@@ -1,11 +1,8 @@
-use std::{ffi, slice};
+mod print;
 
-pub struct ArrayRef<'a, T> {
-    pub rank: usize,
-    pub shape: &'a [usize],
-    pub strides: &'a [usize],
-    pub data: &'a [T],
-}
+pub use print::*;
+
+use std::{ffi, slice};
 
 #[repr(C)]
 pub struct FfiUnrankedMemRef {
@@ -21,9 +18,17 @@ struct FfiMemRefDescriptorHeader<T> {
     rest: ffi::c_void,
 }
 
+struct ArrayRef<'a, T> {
+    rank: usize,
+    shape: &'a [usize],
+    strides: &'a [usize],
+    data: &'a [T],
+}
+
+/// Create an `ArrayRef` instance out of a raw MLIR unranked memref
 /// # Safety
 /// This operation requires the given struct to be a valid MLIR unranked memref
-pub unsafe fn extract_memref<'a, T>(memref: FfiUnrankedMemRef) -> ArrayRef<'a, T> {
+unsafe fn extract_memref<'a, T>(memref: FfiUnrankedMemRef) -> ArrayRef<'a, T> {
     let descr_ptr = memref.descriptor as *const FfiMemRefDescriptorHeader<T>;
     let descr = unsafe { &*descr_ptr };
 
@@ -71,7 +76,7 @@ impl<'a, T> std::ops::Index<usize> for ArrayRef<'a, T> {
 }
 
 impl<'a, T> ArrayRef<'a, T> {
-    pub fn elem_count(&self) -> usize {
+    fn elem_count(&self) -> usize {
         self.shape.iter().copied().product()
     }
 }

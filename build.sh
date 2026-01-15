@@ -25,5 +25,5 @@ clang $name.o \
   -lmlir_c_runner_utils \
   -L ../target/release \
   -L ../target/debug \
-  -lpretty_print \
+  -lstdlib \
   -o $name

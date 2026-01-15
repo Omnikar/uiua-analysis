@@ -4,7 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace]
-members = ["ffi-interop", "pretty-print"]
+members = ["stdlib"]
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+opt-level = "z"
 
 [dependencies]
 anyhow = "1.0.100"

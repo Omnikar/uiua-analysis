@@ -728,7 +728,7 @@ fn show<'c, 'a, 'u>(
         CompType::Bool => "i1",
         CompType::Char => "i32",
     };
-    let print_func = format!("pretty_print_show_{print_func_suffix}");
+    let print_func = format!("print_show_{print_func_suffix}");
 
     let call_op = func::call(
         ctx.context,

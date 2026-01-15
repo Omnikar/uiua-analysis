@@ -1,5 +1,5 @@
+use crate::{extract_memref, ArrayRef, FfiUnrankedMemRef};
 use concat_idents::concat_idents;
-use ffi_interop::{extract_memref, ArrayRef, FfiUnrankedMemRef};
 
 fn show_num<T: std::fmt::Display>(arr: ArrayRef<T>) {
     if arr.rank == 0 {
@@ -56,7 +56,7 @@ fn show_num<T: std::fmt::Display>(arr: ArrayRef<T>) {
 macro_rules! create_ffi_print_funcs {
     ($($t:ty),+) => {
         $(
-            concat_idents!(fn_name = pretty_print_show_, $t {
+            concat_idents!(fn_name = print_show_, $t {
                 /// # Safety
                 /// The given struct must be a valid MLIR unranked memref
                 #[unsafe(no_mangle)]

@@ -1,5 +1,5 @@
 [package]
-name = "pretty-print"
+name = "stdlib"
 version = "0.1.0"
 edition = "2024"
 
@@ -7,5 +7,4 @@ edition = "2024"
 crate-type = ["staticlib"]
 
 [dependencies]
-ffi-interop = { path = "../ffi-interop" }
 concat-idents = "1.1.5"
