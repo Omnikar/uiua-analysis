@@ -111,9 +111,7 @@ fn compile_func<'c>(
         .unwrap_or_else(|| Location::unknown(ctx.context));
 
     let pre_compile_graph = prepare_graph(&func.graph, &func.infos.map, ctx.uiua);
-    let mut compile_graph: FuncCompileGraph = pre_compile_graph
-        .graph
-        .map_owned(|_, node| (node, None), |_, x| x);
+    let mut compile_graph = new_compile_graph(pre_compile_graph.graph, &[]);
 
     let mut sig_in = Vec::new();
     let mut arg_types = Vec::new();
@@ -149,12 +147,7 @@ fn compile_func<'c>(
     }
 
     let outs = if func_name != "main" {
-        pre_compile_graph
-            .stack
-            .iter()
-            .map(|&(idx, out_i)| Some(compile_graph.node_weight(idx)?.1.as_ref()?[out_i]))
-            .collect::<Option<Vec<_>>>()
-            .context("Did not compile required node")?
+        vals_from_cg(&pre_compile_graph.stack, &compile_graph)?
     } else {
         vec![const_int(0, ctx.index_type, &block, ctx, loc)?]
     };
@@ -175,6 +168,23 @@ fn compile_func<'c>(
     );
 
     Ok(func)
+}
+
+fn new_compile_graph<'c, 'a, 'u>(
+    pre_compile_graph: StableGraph<CompNode<'u>, (usize, usize)>,
+    arg_vals: &[Value<'c, 'a>],
+) -> FuncCompileGraph<'c, 'a, 'u> {
+    // pre_compile_graph.map_owned(|_, node| (node, None), |_, x| x)
+    pre_compile_graph.map_owned(
+        |_, node| {
+            let val = match &node.op {
+                Op::Data(Data::Arg(i)) => arg_vals.get(*i).map(|&x| vec![x]),
+                _ => None,
+            };
+            (node, val)
+        },
+        |_, x| x,
+    )
 }
 
 struct FuncCompileContext<'c, 'a, 'u, 'cg, 'fi, 'fl> {
@@ -207,41 +217,42 @@ fn compile_node<'c, 'a, 'u>(
         compile_node(dep, block, /*info_map,*/ fctx, ctx)?;
     }
 
-    let comp_node = &fctx
+    let comp_node = fctx
         .compile_graph
         .node_weight(idx)
         .expect("Node missing from compile graph")
-        .0;
+        .0
+        .clone();
 
     use uiua::Primitive::*;
     let value = match comp_node.op {
         Op::Data(Data::Arg(i)) => vec![block.argument(i)?.into()],
         Op::Data(Data::Node(Node::Push(value))) => vec![impls::constant(value, block, ctx)?],
         Op::Data(Data::Node(Node::Call(_func, span))) => {
-            impls::call(comp_node, &deps, *span, block, fctx, ctx)?
+            impls::call(&comp_node, &deps, *span, block, fctx, ctx)?
         }
 
         Op::Impl(Impl::Cast(cast), span) => {
             vec![impls::cast_num(
-                cast, comp_node, &deps, span, block, fctx, ctx,
+                cast, &comp_node, &deps, span, block, fctx, ctx,
             )?]
         }
 
         // -- Monadic Pervasive Functions --
         Op::Data(Data::Node(Node::Prim(Not, span))) => {
             vec![impls::sub_const(
-                1, comp_node, &deps, *span, block, fctx, ctx,
+                1, &comp_node, &deps, *span, block, fctx, ctx,
             )?]
         }
         Op::Data(Data::Node(Node::Prim(Sign, span))) => todo!(),
         Op::Data(Data::Node(Node::Prim(Neg, span))) => {
             vec![impls::sub_const(
-                0, comp_node, &deps, *span, block, fctx, ctx,
+                0, &comp_node, &deps, *span, block, fctx, ctx,
             )?]
         }
         Op::Data(Data::Node(Node::Prim(Reciprocal, span))) => vec![impls::perv_monad(
             "tosa.reciprocal",
-            comp_node,
+            &comp_node,
             &deps,
             *span,
             block,
@@ -250,13 +261,13 @@ fn compile_node<'c, 'a, 'u>(
         )?],
         Op::Data(Data::Node(Node::Prim(Abs, span))) => {
             vec![impls::perv_monad(
-                "tosa.abs", comp_node, &deps, *span, block, fctx, ctx,
+                "tosa.abs", &comp_node, &deps, *span, block, fctx, ctx,
             )?]
         }
         Op::Data(Data::Node(Node::Prim(Sqrt, span))) => {
             vec![impls::perv_monad(
                 "math.sqrt",
-                comp_node,
+                &comp_node,
                 &deps,
                 *span,
                 block,
@@ -266,12 +277,12 @@ fn compile_node<'c, 'a, 'u>(
         }
         Op::Data(Data::Node(Node::Prim(Exp, span))) => {
             vec![impls::perv_monad(
-                "math.exp", comp_node, &deps, *span, block, fctx, ctx,
+                "math.exp", &comp_node, &deps, *span, block, fctx, ctx,
             )?]
         }
         Op::Data(Data::Node(Node::Prim(Sin, span))) => {
             vec![impls::perv_monad(
-                "math.sin", comp_node, &deps, *span, block, fctx, ctx,
+                "math.sin", &comp_node, &deps, *span, block, fctx, ctx,
             )?]
         }
         Op::Data(Data::Node(Node::Prim(Floor, span))) => todo!(),
@@ -281,24 +292,24 @@ fn compile_node<'c, 'a, 'u>(
         // -- Dyadic Pervasive Functions --
         Op::Data(Data::Node(Node::Prim(Add, span))) => {
             vec![impls::arith(
-                "tosa.add", comp_node, &deps, *span, block, fctx, ctx,
+                "tosa.add", &comp_node, &deps, *span, block, fctx, ctx,
             )?]
         }
         Op::Data(Data::Node(Node::Prim(Sub, span))) => {
             vec![impls::arith(
-                "tosa.sub", comp_node, &deps, *span, block, fctx, ctx,
+                "tosa.sub", &comp_node, &deps, *span, block, fctx, ctx,
             )?]
         }
         Op::Data(Data::Node(Node::Prim(Mul, span))) => {
             vec![impls::arith(
-                "tosa.mul", comp_node, &deps, *span, block, fctx, ctx,
+                "tosa.mul", &comp_node, &deps, *span, block, fctx, ctx,
             )?]
         }
         // FIXME: `arith` elementwise ops don't support fixing
         Op::Data(Data::Node(Node::Prim(Div, span))) => {
             vec![impls::arith(
                 "arith.divf",
-                comp_node,
+                &comp_node,
                 &deps,
                 *span,
                 block,
@@ -309,12 +320,12 @@ fn compile_node<'c, 'a, 'u>(
 
         // -- Monadic Array Functions --
         Op::Data(Data::Node(Node::Prim(Range, span))) => {
-            vec![impls::range(comp_node, &deps, *span, block, fctx, ctx)?]
+            vec![impls::range(&comp_node, &deps, *span, block, fctx, ctx)?]
         }
 
         // -- Mapping Modifiers --
         Op::Data(Data::Node(Node::Mod(Rows, _funcs, span))) => {
-            vec![impls::rows(comp_node, &deps, *span, block, fctx, ctx)?]
+            impls::rows(&comp_node, &deps, *span, block, fctx, ctx)?
         }
 
         Op::Data(Data::Node(Node::Prim(Sys(SysOp::Print), span))) => {
@@ -361,7 +372,7 @@ fn name_mangle(func: &AnalyzedFunc) -> Result<String> {
                         .join("x"),
                     ShapeInfo::Unranked { .. } => "U".to_owned(),
                 },
-                crate::pre_compile::CompType::from_info(info),
+                CompType::from_info(info),
             )
         })
         .join("_");
@@ -415,6 +426,60 @@ fn const_int<'a, 'c>(
         .result(0)
         .map(Into::into)
         .map_err(Into::into)
+}
+
+fn vals_from_cg<'c, 'a, 'u, 'b>(
+    idxs: impl IntoIterator<Item = &'b (NodeIndex, usize)>,
+    cg: &FuncCompileGraph<'c, 'a, 'u>,
+) -> Result<Vec<Value<'c, 'a>>> {
+    idxs.into_iter()
+        .map(|&(idx, out_i)| Some(cg.node_weight(idx)?.1.as_ref()?[out_i]))
+        .collect::<Option<Vec<_>>>()
+        .context("Did not compile required node")
+}
+
+fn tensor_to_unranked_memref<'c, 'a>(
+    dep_info: &ValInfo,
+    dep_val: Value<'c, 'a>,
+    block: &'a Block<'c>,
+    ctx: CompileContext<'c, '_>,
+    loc: Location<'c>,
+) -> Result<Value<'c, 'a>> {
+    let dep_tensor_type = RankedTensorType::try_from(dep_val.r#type())?;
+    let elem_type = dep_tensor_type.element();
+
+    let dims = dims_from_shape_info(&dep_info.shape)
+        .into_iter()
+        .map(|x| x as i64)
+        .collect_vec();
+
+    let memref_type: Type = MemRefType::new(elem_type, &dims, None, None).into();
+
+    let to_buffer_op = bufferization::to_buffer(ctx.context, memref_type, dep_val, loc);
+
+    let null_attr = mlir_sys::MlirAttribute {
+        ptr: std::ptr::null(),
+    };
+    let unranked_memref_type = unsafe {
+        Type::from_raw(mlir_sys::mlirUnrankedMemRefTypeGet(
+            elem_type.to_raw(),
+            null_attr,
+        ))
+    };
+
+    let memref_val: Value = block
+        .append_operation(to_buffer_op.into())
+        .result(0)?
+        .into();
+
+    let memref_cast_op = memref::cast(ctx.context, unranked_memref_type, memref_val, loc);
+
+    let unranked_memref_val: Value = block
+        .append_operation(memref_cast_op.into())
+        .result(0)?
+        .into();
+
+    Ok(unranked_memref_val)
 }
 
 fn mk_elem_type<'c>(comp_type: &CompType, ctx: CompileContext<'c, '_>) -> Type<'c> {
@@ -630,49 +695,34 @@ fn show<'c, 'a, 'u>(
     let (dep_infos, dep_vals) = impls::get_deps(deps, fctx.compile_graph);
     let (dep_info, dep_val) = (dep_infos[0], dep_vals[0]);
 
-    let dep_tensor_type = RankedTensorType::try_from(dep_val.r#type())?;
-    let elem_type = dep_tensor_type.element();
+    let unranked_memref_val = tensor_to_unranked_memref(dep_info, dep_val, block, ctx, loc)?;
 
-    let dims = dims_from_shape_info(&dep_info.shape)
-        .into_iter()
-        .map(|x| x as i64)
-        .collect_vec();
-
-    let memref_type: Type = MemRefType::new(elem_type, &dims, None, None).into();
-
-    let to_buffer_op = bufferization::to_buffer(ctx.context, memref_type, dep_val, loc);
-
-    let null_attr = mlir_sys::MlirAttribute {
-        ptr: std::ptr::null(),
+    let comp_type = CompType::from_info(dep_info);
+    let print_func_suffix = match comp_type {
+        CompType::Int(s, i) => {
+            [["u8", "u16", "u32", "u64"], ["i8", "i16", "i32", "i64"]][s as usize][i as usize]
+        }
+        CompType::Float(d) => {
+            if d {
+                "f64"
+            } else {
+                "f32"
+            }
+        }
+        CompType::Bool => "i1",
+        CompType::Char => "i32",
     };
-    let unranked_memref_type = unsafe {
-        Type::from_raw(mlir_sys::mlirUnrankedMemRefTypeGet(
-            elem_type.to_raw(),
-            null_attr,
-        ))
-    };
+    let print_func = format!("pretty_print_show_{print_func_suffix}");
 
-    let memref_val: Value = block
-        .append_operation(to_buffer_op.into())
-        .result(0)?
-        .into();
+    let call_op = func::call(
+        ctx.context,
+        FlatSymbolRefAttribute::new(ctx.context, &print_func),
+        &[unranked_memref_val],
+        &[],
+        loc,
+    );
 
-    let memref_cast_op = memref::cast(ctx.context, unranked_memref_type, memref_val, loc);
-
-    let unranked_memref_val: Value = block
-        .append_operation(memref_cast_op.into())
-        .result(0)?
-        .into();
-
-    // let call_op = func::call(
-    //     ctx.context,
-    //     FlatSymbolRefAttribute::new(ctx.context, "example_func"),
-    //     &[unranked_memref_val],
-    //     &[],
-    //     loc,
-    // );
-
-    // block.append_operation(call_op);
+    block.append_operation(call_op);
 
     Ok(())
 }

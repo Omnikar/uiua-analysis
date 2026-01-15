@@ -1,5 +1,12 @@
 module {
-  // func.func private @example_func(memref<*xi8>) -> ()
+  func.func private @pretty_print_show_u8(memref<*xi8>) -> ()
+  func.func private @pretty_print_show_i8(memref<*xi8>) -> ()
+  func.func private @pretty_print_show_u16(memref<*xi16>) -> ()
+  func.func private @pretty_print_show_i16(memref<*xi16>) -> ()
+  func.func private @pretty_print_show_u32(memref<*xi32>) -> ()
+  func.func private @pretty_print_show_i32(memref<*xi32>) -> ()
+  func.func private @pretty_print_show_u64(memref<*xi64>) -> ()
+  func.func private @pretty_print_show_i64(memref<*xi64>) -> ()
 
   llvm.func @printf(!llvm.ptr<0>, ...) -> i32
   llvm.mlir.global internal constant @_ln_fmt("\n\00") : !llvm.array<2 x i8>

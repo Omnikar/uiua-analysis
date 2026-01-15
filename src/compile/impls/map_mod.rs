@@ -5,24 +5,25 @@ pub fn rows<'c, 'a, 'u>(
     deps: &[(NodeIndex, usize)],
     span: usize,
     block: &'a Block<'c>,
-    fctx: &FuncCompileContext<'c, 'a, 'u, '_, '_, '_>,
+    fctx: &mut FuncCompileContext<'c, 'a, 'u, '_, '_, '_>,
     ctx: CompileContext<'c, 'u>,
-) -> Result<Value<'c, 'a>> {
+) -> Result<Vec<Value<'c, 'a>>> {
     let loc = span_to_loc(span, ctx);
 
     let (dep_infos, dep_vals) = get_deps(deps, fctx.compile_graph);
 
-    let (subfunc_graph, subfunc_info_map) =
-        &fctx.func_infos.subfuncs[comp_node.info.subfunc_idxs[0]];
-
     let zero_val = const_int(0, ctx.index_type, block, ctx, loc)?;
     let one_val = const_int(1, ctx.index_type, block, ctx, loc)?;
+
+    // - Identify fixed arguments and determine the number of rows to operate on -
 
     let mut deps_fixed = vec![false; deps.len()];
 
     let out_len: Option<(Option<usize>, Value)> = if deps.is_empty() {
+        // When there are no arguments, the function is to be simply called once
         None
     } else if deps.len() == 1 {
+        // If there is one argument, it provides the row count
         match dep_infos[0].shape.len() {
             Some(Some(ax)) => match ax.only_const() {
                 Some(len) => {
@@ -41,6 +42,8 @@ pub fn rows<'c, 'a, 'u>(
             None => bail!("Rows is not currently supported for unranked arrays"),
         }
     } else {
+        // Multiple arguments; do whatever necessary to ensure length matching and determine the output length
+
         // None: unknown length
         // Some(None): known to be a scalar
         // Some(Some(…)): statically known length
@@ -141,6 +144,25 @@ pub fn rows<'c, 'a, 'u>(
     // TODO
     // If out_len is None, just call the function directly
     // Otherwise do rows stuff
+
+    let (subfunc_graph, subfunc_info_map) =
+        &fctx.func_infos.subfuncs[comp_node.info.subfunc_idxs[0]];
+    let pre_compile_graph = prepare_graph(subfunc_graph, subfunc_info_map, ctx.uiua);
+
+    let Some(out_len) = out_len else {
+        let mut compile_graph = new_compile_graph(pre_compile_graph.graph, &dep_vals);
+        // If all scalars, just call the function
+        let mut sub_fctx = FuncCompileContext {
+            compile_graph: &mut compile_graph,
+            ..*fctx
+        };
+
+        for root in subfunc_graph.roots(&ctx.uiua.asm) {
+            compile_node(root, block, &mut sub_fctx, ctx)?;
+        }
+
+        return vals_from_cg(&pre_compile_graph.stack, &compile_graph);
+    };
 
     todo!()
 

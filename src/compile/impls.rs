@@ -29,14 +29,14 @@ use melior::{
 use petgraph::graph::NodeIndex;
 
 use super::{
-    const_int, dims_from_shape_info, mk_elem_type, mk_tensor_type, mk_type,
-    mk_type_from_comp_shape, name_mangle, span_to_loc, CompileContext, FuncCompileContext,
-    FuncCompileGraph, DYN_AX,
+    compile_node, const_int, dims_from_shape_info, mk_elem_type, mk_tensor_type, mk_type,
+    mk_type_from_comp_shape, name_mangle, new_compile_graph, span_to_loc, vals_from_cg,
+    CompileContext, FuncCompileContext, FuncCompileGraph, DYN_AX,
 };
 use crate::{
     analyze::{ShapeInfo, ValInfo},
     graph::StackSlice,
-    pre_compile::{Cast, CompNode, CompType},
+    pre_compile::{prepare_graph, Cast, CompNode, CompType},
 };
 
 pub fn constant<'c, 'a>(

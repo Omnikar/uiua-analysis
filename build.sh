@@ -23,4 +23,7 @@ llc -filetype=obj --relocation-model=pic $name_opt.ll -o $name.o
 clang $name.o \
   -L $LLVM_DIR \
   -lmlir_c_runner_utils \
+  -L ../target/release \
+  -L ../target/debug \
+  -lpretty_print \
   -o $name
