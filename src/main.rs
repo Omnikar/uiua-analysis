@@ -13,19 +13,6 @@ use std::collections::HashSet;
 use std::io::Write;
 
 fn main() -> Result<()> {
-    // dbg!(std::mem::size_of::<graph::Data>());
-    // dbg!(std::mem::size_of::<graph::Stack>());
-    // dbg!(std::mem::size_of::<graph::DataGraph>());
-    // dbg!(std::mem::size_of::<analyze::axis::Axis>());
-    // dbg!(std::mem::size_of::<analyze::SymShape>());
-    // dbg!(std::mem::size_of::<uiua::Value>());
-    // dbg!(std::mem::size_of::<analyze::ShapeInfo>());
-    // dbg!(std::mem::size_of::<analyze::ValInfo>());
-    // dbg!(std::mem::size_of::<analyze::NodeInfo>());
-    // dbg!(std::mem::size_of::<analyze::FuncInfos>());
-    // dbg!(std::mem::size_of::<analyze::AnalyzedFunc>());
-    // dbg!(std::mem::size_of::<analyze::FuncLib>());
-
     let file = std::env::args().nth(1).unwrap();
     let text = std::fs::read_to_string(file).unwrap();
     let asm = uiua::Assembly::from_uasm(&text).unwrap();
@@ -34,39 +21,6 @@ fn main() -> Result<()> {
 
     analyze_test(&uiua)?;
     compile::compile_test(&uiua)?;
-
-    // use analyze::axis::Axis;
-    // let mut nvars = 0;
-    // let x0 = Axis::newvar(&mut nvars);
-    // let x1 = Axis::newvar(&mut nvars);
-    // let x2 = Axis::newvar(&mut nvars);
-    // let ax = Axis::from(4) * &x0 * x1.pow(3) + x2 * x0.pow(2);
-    // let ax2 = ax.pow(2);
-    // dbg!(ax, ax2);
-    // let ax = Axis::from(2) * &x0 * x1.pow(2) + x0.pow(3);
-    // let new_ax = ax
-    //     .substitute([(1, Axis::from(5)), (0, Axis::from(2) * x2)])
-    //     .unwrap();
-    // dbg!(ax, new_ax);
-
-    // let node = &uiua.asm.root;
-    // let graph = graph::DataGraph::from_node(node, &uiua.asm).unwrap();
-    // let mut f = std::fs::File::create("graph.dot").unwrap();
-    // let s = format!(
-    //     "{:?}",
-    //     // petgraph::dot::Dot::with_config(&arg_graph.graph, &[petgraph::dot::Config::EdgeNoLabel]),
-    //     // petgraph::dot::Dot::with_config(
-    //     //     &arg_graph.graph,
-    //     //     &[petgraph::dot::Config::RankDir(petgraph::dot::RankDir::LR)]
-    //     // ),
-    //     petgraph::dot::Dot::new(&graph.graph),
-    // );
-    // let s = s.strip_prefix("digraph {\n").unwrap();
-    // writeln!(f, "digraph {{").unwrap();
-    // writeln!(f, "    node [shape=box]").unwrap();
-    // writeln!(f, r#"    node [fontname="Uiua386"]"#).unwrap();
-    // writeln!(f, r#"    edge [fontname="Uiua386"]"#).unwrap();
-    // write!(f, "{s}").unwrap();
 
     Ok(())
 }
@@ -100,6 +54,11 @@ fn analyze_test(uiua: &uiua::Uiua) -> Result<()> {
 
     Ok(())
 }
+
+// ----------
+// This project is still a work-in-progress.
+// Everything below this line is old code that has been superseded and will be removed eventually.
+// ----------
 
 fn test() {
     let file = std::env::args().nth(1).unwrap();
