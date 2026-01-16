@@ -1,9 +1,45 @@
-use crate::{extract_memref, ArrayRef, FfiUnrankedMemRef};
+use crate::{ArrayRef, FfiUnrankedMemRef, extract_memref};
 use concat_idents::concat_idents;
 
-fn show_num<T: std::fmt::Display>(arr: ArrayRef<T>) {
-    if arr.rank == 0 {
-        println!("{}", arr.data[0])
+fn show_num<T: std::fmt::Display + std::cmp::PartialOrd>(arr: ArrayRef<T>) {
+    if arr.data.len() > 3600 {
+        print!("╭─ ");
+        print!("{}", arr.shape[0]);
+        for axis in &arr.shape[1..] {
+            print!("×{axis}");
+        }
+        println!(" {}", std::any::type_name::<T>());
+        println!(
+            "Range: {}-{}",
+            arr.data
+                .iter()
+                .min_by(|a, b| {
+                    match a.le(b) {
+                        true => std::cmp::Ordering::Less,
+                        false => std::cmp::Ordering::Greater,
+                    }
+                })
+                .unwrap(),
+            arr.data
+                .iter()
+                .max_by(|a, b| {
+                    match a.ge(b) {
+                        true => std::cmp::Ordering::Greater,
+                        false => std::cmp::Ordering::Less,
+                    }
+                })
+                .unwrap()
+        );
+        let size = arr.data.len() * size_of::<T>();
+        match size {
+            1_000_000_000.. => println!("Size: {} GB", size as f32 / 1e9),
+            1_000_000.. => println!("Size: {} MB", size as f32 / 1e6),
+            1_000.. => println!("Size: {} KB", size as f32 / 1e3),
+            0.. => println!("Size: {} B", size),
+        }
+        println!("╰─");
+    } else if arr.rank == 0 {
+        println!("{}", arr.data[0]);
     } else if arr.rank == 1 {
         print!("[");
         if !arr.data.is_empty() {
@@ -49,7 +85,7 @@ fn show_num<T: std::fmt::Display>(arr: ArrayRef<T>) {
                 print!(" {num}");
             }
         }
-        println!("\n╰─ ");
+        println!("\n╰─");
     }
 }
 
