@@ -8,7 +8,7 @@ pub fn range<'c, 'a, 'u>(
     fctx: &FuncCompileContext<'c, 'a, 'u, '_, '_, '_>,
     ctx: CompileContext<'c, 'u>,
 ) -> Result<Value<'c, 'a>> {
-    let (dep_infos, dep_vals) = get_deps(deps, fctx.compile_graph);
+    let (dep_infos, _dep_types, dep_vals) = get_deps(deps, fctx.compile_graph);
     let (dep_info, dep_val) = (dep_infos[0], dep_vals[0]);
 
     let rank = dep_info

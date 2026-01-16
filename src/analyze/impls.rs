@@ -1011,7 +1011,7 @@ pub fn rows<'u>(funcs: &'u [SigNode], ctx: AnalyzeCtx<'_, '_, '_, '_, 'u>) -> Re
                 if val.shape.first().copied().unwrap_or(1) == 1 {
                     Known(val.first(ctx.uiua)?)
                 } else {
-                    Ranked(val.shape[1..].iter().map(Into::into).collect())
+                    Ranked(val.shape[1..].iter().map_into().collect())
                 }
             }
             Ranked(mut shape) => {
@@ -1106,7 +1106,7 @@ pub fn table<'u>(funcs: &'u [SigNode], ctx: AnalyzeCtx<'_, '_, '_, '_, 'u>) -> R
                 if val.shape.first().copied().unwrap_or(1) == 1 {
                     Known(val.first(ctx.uiua)?)
                 } else {
-                    Ranked(val.shape[1..].iter().map(Into::into).collect())
+                    Ranked(val.shape[1..].iter().map_into().collect())
                 }
             }
             Ranked(mut shape) => {
@@ -1213,7 +1213,7 @@ pub fn reduce<'u>(funcs: &'u [SigNode], ctx: AnalyzeCtx<'_, '_, '_, '_, 'u>) -> 
             if val.shape.first().copied().unwrap_or(1) == 1 {
                 Known(val.first(ctx.uiua)?)
             } else {
-                Ranked(val.shape[1..].iter().map(Into::into).collect())
+                Ranked(val.shape[1..].iter().map_into().collect())
             }
         }
         Ranked(mut shape) => {

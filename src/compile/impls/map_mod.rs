@@ -8,9 +8,11 @@ pub fn rows<'c, 'a, 'u>(
     fctx: &mut FuncCompileContext<'c, 'a, 'u, '_, '_, '_>,
     ctx: CompileContext<'c, 'u>,
 ) -> Result<Vec<Value<'c, 'a>>> {
+    let unranked_msg = "Rows is not currently supported for unranked arrays";
+
     let loc = span_to_loc(span, ctx);
 
-    let (dep_infos, dep_vals) = get_deps(deps, fctx.compile_graph);
+    let (dep_infos, dep_comp_types, mut dep_vals) = get_deps(deps, fctx.compile_graph);
 
     let zero_val = const_int(0, ctx.index_type, block, ctx, loc)?;
     let one_val = const_int(1, ctx.index_type, block, ctx, loc)?;
@@ -39,7 +41,7 @@ pub fn rows<'c, 'a, 'u>(
                 }
             },
             Some(None) => None,
-            None => bail!("Rows is not currently supported for unranked arrays"),
+            None => bail!(unranked_msg),
         }
     } else {
         // Multiple arguments; do whatever necessary to ensure length matching and determine the output length
@@ -59,7 +61,7 @@ pub fn rows<'c, 'a, 'u>(
                 None => None,
             })
             .collect::<Option<Vec<_>>>()
-            .context("Rows is not currently supported for unranked arrays")?;
+            .context(unranked_msg)?;
 
         // The length against which to compare all other axes
         let ref_len: (Option<usize>, Value);
@@ -150,6 +152,7 @@ pub fn rows<'c, 'a, 'u>(
     let pre_compile_graph = prepare_graph(subfunc_graph, subfunc_info_map, ctx.uiua);
 
     let Some(out_len) = out_len else {
+        // If out_len is None, all inputs are scalars and the function should be called directly
         let mut compile_graph = new_compile_graph(pre_compile_graph.graph, &dep_vals);
         // If all scalars, just call the function
         let mut sub_fctx = FuncCompileContext {
@@ -164,22 +167,255 @@ pub fn rows<'c, 'a, 'u>(
         return vals_from_cg(&pre_compile_graph.stack, &compile_graph);
     };
 
-    todo!()
+    // Promote all scalars to singleton lists
+    for (info, val) in dep_infos.iter().zip(&mut dep_vals) {
+        enforce_min_rank(1, val, &info.shape, loc, block, ctx)?;
+    }
 
-    // Ok(block
-    //     .append_operation(
-    //         arith::constant(
-    //             ctx.context,
-    //             RankedTensorType::new(&[1], ctx.bool_type, None).into(),
-    //             DenseElementsAttribute::new(
-    //                 RankedTensorType::new(&[1], ctx.bool_type, None).into(),
-    //                 &[IntegerAttribute::new(ctx.bool_type, 0).into()],
-    //             )?
-    //             .into(),
-    //             loc,
-    //         )
-    //         .into(),
-    //     )
-    //     .result(0)?
-    //     .into())
+    // If code execution reaches here, at least one input is rank ≥1
+    // Therefore, all outputs should also be rank ≥1
+
+    let (dep_row_dims, dep_row_types): (Vec<Vec<u64>>, Vec<Type>) = dep_comp_types
+        .iter()
+        .zip(&dep_infos)
+        .map(|(&comp_type, &val_info)| {
+            let mut dims = val_info
+                .shape
+                .known_shape()
+                .unwrap()
+                .into_iter()
+                .map(|x| x.map(|x| x as u64).unwrap_or(DYN_AX))
+                .collect_vec();
+            if !dims.is_empty() {
+                dims.remove(0);
+            }
+            let elem_type = mk_elem_type(comp_type, ctx);
+            let tensor_type: Type = RankedTensorType::new(&dims, elem_type, None).into();
+            (dims, tensor_type)
+        })
+        .unzip();
+
+    let out_row_shapes: Vec<Vec<u64>> = comp_node
+        .info
+        .vals
+        .iter()
+        .map(|val_info| {
+            val_info.shape.known_shape().map(|sh| {
+                sh.into_iter()
+                    .skip(1)
+                    .map(|len| len.map(|len| len as u64).unwrap_or(DYN_AX))
+                    .collect_vec()
+            })
+        })
+        .collect::<Option<_>>()
+        .context(unranked_msg)?;
+
+    let all_row_shapes_known: bool = out_row_shapes
+        .iter()
+        .flat_map(|v| v.iter())
+        .all(|&x| x != DYN_AX);
+
+    // If it is known at compile time that there are zero rows
+    if out_len.0 == Some(0) {
+        todo!()
+    }
+
+    if !all_row_shapes_known && out_len.0.is_none() {
+        todo!()
+    }
+
+    let mut out_row_types = Vec::<Type>::new();
+    let mut out_types = Vec::<Type>::new();
+    let mut out_inits = Vec::<Value>::new();
+    let start_i: usize;
+
+    if all_row_shapes_known {
+        for (row_shape, comp_type) in out_row_shapes.iter().zip(&comp_node.types) {
+            let elem_type = mk_elem_type(comp_type, ctx);
+            let row_type: Type = RankedTensorType::new(row_shape, elem_type, None).into();
+
+            let mut out_shape = row_shape.clone();
+            out_shape.insert(0, out_len.0.map(|x| x as u64).unwrap_or(DYN_AX));
+            let out_type: Type = RankedTensorType::new(&out_shape, elem_type, None).into();
+
+            let empty_op = tensor::empty(ctx.context, out_type, &[], loc);
+            let empty_val: Value = block.append_operation(empty_op.into()).result(0)?.into();
+
+            out_row_types.push(row_type);
+            out_types.push(out_type);
+            out_inits.push(empty_val);
+        }
+
+        start_i = 0;
+    } else {
+        todo!()
+    }
+
+    // - For loop -
+
+    let for_block_args = std::iter::once(ctx.index_type)
+        .chain(out_types.iter().copied())
+        .map(|typ| (typ, loc))
+        .collect_vec();
+    let for_block = Block::new(&for_block_args);
+    let idx_val: Value = for_block.argument(0)?.into();
+    let accs: Vec<Value> = (1..=out_inits.len())
+        .map(|i| Ok(for_block.argument(i).map(Into::into)?))
+        .collect::<Result<_>>()?;
+
+    let extracted: Vec<Value> = (0..deps.len())
+        .map(|arg_i| {
+            let dep_val = dep_vals[arg_i];
+            // let dep_info = dep_infos[arg_i];
+
+            let row_dims = &dep_row_dims[arg_i];
+            let row_type = dep_row_types[arg_i];
+
+            let mut static_offsets = vec![0; row_dims.len()];
+            static_offsets.insert(0, DYN_AX as i64);
+
+            let mut size_vals = Vec::<Value>::new();
+            let mut static_sizes = vec![1];
+            for (i, &dim) in row_dims.iter().enumerate() {
+                static_sizes.push(dim as i64);
+                if dim == DYN_AX {
+                    let dim_i_val: Value =
+                        const_int(i as i64 + 1, ctx.index_type, &for_block, ctx, loc)?;
+
+                    let dim_op = tensor::dim(ctx.context, ctx.index_type, dep_val, dim_i_val, loc);
+                    let len_val: Value =
+                        for_block.append_operation(dim_op.into()).result(0)?.into();
+
+                    size_vals.push(len_val);
+                }
+            }
+
+            let static_strides = vec![1; row_dims.len() + 1];
+
+            let attributes: Vec<(Identifier, Attribute)> = [
+                ("static_offsets", &*static_offsets),
+                ("static_sizes", &*static_sizes),
+                ("static_strides", &*static_strides),
+                // ("operandSegmentSizes", &[1, 1, size_vals.len() as i64, 0]),
+            ]
+            .into_iter()
+            .map(|(name, arr)| {
+                (
+                    Identifier::new(ctx.context, name),
+                    DenseI64ArrayAttribute::new(ctx.context, arr).into(),
+                )
+            })
+            .collect_vec();
+
+            let get_op = OperationBuilder::new("tensor.extract_slice", loc)
+                .add_results(&[row_type])
+                .add_operands(&[dep_val, idx_val])
+                .add_operands(&size_vals)
+                .add_attributes(&attributes)
+                .add_attributes(&[(
+                    Identifier::new(ctx.context, "operandSegmentSizes"),
+                    DenseI32ArrayAttribute::new(ctx.context, &[1, 1, size_vals.len() as i32, 0])
+                        .into(),
+                )])
+                .build()?;
+
+            for_block
+                .append_operation(get_op)
+                .result(0)
+                .map_err(Into::into)
+                .map(Into::into)
+        })
+        .collect::<Result<_>>()?;
+
+    let mut compile_graph = new_compile_graph(pre_compile_graph.graph, &extracted);
+    let mut sub_fctx = FuncCompileContext {
+        compile_graph: &mut compile_graph,
+        ..*fctx
+    };
+
+    for root in subfunc_graph.roots(&ctx.uiua.asm) {
+        compile_node(root, &for_block, &mut sub_fctx, ctx)?;
+    }
+
+    let insert_vals = vals_from_cg(&pre_compile_graph.stack, &compile_graph)?;
+
+    let mut yield_vals = Vec::<Value>::new();
+    for (insert_val, acc, row_dims) in itertools::multizip((insert_vals, accs, &out_row_shapes)) {
+        let mut static_offsets = vec![0; row_dims.len()];
+        static_offsets.insert(0, DYN_AX as i64);
+
+        let mut size_vals = Vec::<Value>::new();
+        let mut static_sizes = vec![1];
+        for (i, &dim) in row_dims.iter().enumerate() {
+            static_sizes.push(dim as i64);
+            if dim == DYN_AX {
+                let dim_i_val: Value =
+                    const_int(i as i64 + 1, ctx.index_type, &for_block, ctx, loc)?;
+
+                let dim_op = tensor::dim(ctx.context, ctx.index_type, insert_val, dim_i_val, loc);
+                let len_val: Value = for_block.append_operation(dim_op.into()).result(0)?.into();
+
+                size_vals.push(len_val);
+            }
+        }
+
+        let static_strides = vec![1; row_dims.len() + 1];
+
+        let attributes: Vec<(Identifier, Attribute)> = [
+            ("static_offsets", &*static_offsets),
+            ("static_sizes", &*static_sizes),
+            ("static_strides", &*static_strides),
+            // ("operandSegmentSizes", &[1, 1, 1, size_vals.len() as i64, 0]),
+        ]
+        .into_iter()
+        .map(|(name, arr)| {
+            (
+                Identifier::new(ctx.context, name),
+                DenseI64ArrayAttribute::new(ctx.context, arr).into(),
+            )
+        })
+        .collect_vec();
+
+        let insert_op = OperationBuilder::new("tensor.insert_slice", loc)
+            .add_results(&[acc.r#type()])
+            .add_operands(&[insert_val, acc, idx_val])
+            .add_operands(&size_vals)
+            .add_attributes(&attributes)
+            .add_attributes(&[(
+                Identifier::new(ctx.context, "operandSegmentSizes"),
+                DenseI32ArrayAttribute::new(ctx.context, &[1, 1, 1, size_vals.len() as i32, 0])
+                    .into(),
+            )])
+            .build()?;
+
+        let out_acc: Value = for_block.append_operation(insert_op).result(0)?.into();
+        yield_vals.push(out_acc);
+    }
+
+    for_block.append_operation(scf::r#yield(ctx.context, &yield_vals, loc).into());
+
+    let for_region = Region::new();
+    for_region.append_block(for_block);
+
+    let for_op = OperationBuilder::new("scf.for", loc)
+        .add_results(&out_types)
+        .add_operands(&[
+            const_int(start_i as i64, ctx.index_type, block, ctx, loc)?,
+            out_len.1,
+            one_val,
+        ])
+        .add_operands(&out_inits)
+        .add_attributes(&[(
+            Identifier::new(ctx.context, "operandSegmentSizes"),
+            DenseI32ArrayAttribute::new(ctx.context, &[1, 1, 1, out_inits.len() as i32]).into(),
+        )])
+        .add_regions([for_region])
+        .build()?;
+
+    let op_ref = block.append_operation(for_op);
+
+    (0..out_inits.len())
+        .map(|i| op_ref.result(i).map(Into::into))
+        .collect::<Result<_, _>>()
+        .map_err(Into::into)
 }

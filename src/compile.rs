@@ -70,7 +70,7 @@ pub fn compile_test(uiua: &uiua::Uiua) -> Result<()> {
         uiua,
     };
 
-    let module = Module::parse(ctx.context, include_str!("print_num.mlir"))
+    let module = Module::parse(ctx.context, include_str!("stdlib_header.mlir"))
         .context("Failed to parse module")?;
 
     let mut funclib = FuncLib::new();
@@ -342,7 +342,8 @@ fn compile_node<'c, 'a, 'u>(
         }
 
         Op::Data(Data::Node(Node::Prim(Sys(SysOp::Print), span))) => {
-            print(&deps, *span, block, fctx, ctx)?;
+            // print(&deps, *span, block, fctx, ctx)?;
+            show(&deps, *span, block, fctx, ctx)?;
             Vec::new()
         }
         Op::Data(Data::Node(&Node::Prim(Sys(SysOp::Show), span)))
@@ -707,7 +708,7 @@ fn show<'c, 'a, 'u>(
 ) -> Result<()> {
     let loc = span_to_loc(span, ctx);
 
-    let (dep_infos, dep_vals) = impls::get_deps(deps, fctx.compile_graph);
+    let (dep_infos, _dep_types, dep_vals) = impls::get_deps(deps, fctx.compile_graph);
     let (dep_info, dep_val) = (dep_infos[0], dep_vals[0]);
 
     let unranked_memref_val = tensor_to_unranked_memref(dep_info, dep_val, block, ctx, loc)?;

@@ -11,7 +11,7 @@ pub fn perv_monad<'c, 'a, 'u>(
 ) -> Result<Value<'c, 'a>> {
     let loc = span_to_loc(span, ctx);
 
-    let (_dep_infos, dep_vals) = get_deps(deps, fctx.compile_graph);
+    let (_dep_infos, _dep_types, dep_vals) = get_deps(deps, fctx.compile_graph);
     let dep_val = dep_vals[0];
 
     let out_info = &comp_node.info.vals[0];
@@ -37,7 +37,7 @@ pub fn sub_const<'c, 'a, 'u>(
 ) -> Result<Value<'c, 'a>> {
     let loc = span_to_loc(span, ctx);
 
-    let (_dep_infos, dep_vals) = get_deps(deps, fctx.compile_graph);
+    let (_dep_infos, _dep_types, dep_vals) = get_deps(deps, fctx.compile_graph);
     let dep_val = dep_vals[0];
 
     let out_info = &comp_node.info.vals[0];

@@ -12,7 +12,7 @@ pub fn arith<'c, 'a, 'u>(
 ) -> Result<Value<'c, 'a>> {
     let loc = span_to_loc(span, ctx);
 
-    let (dep_infos, mut dep_vals) = get_deps(deps, fctx.compile_graph);
+    let (dep_infos, _dep_types, mut dep_vals) = get_deps(deps, fctx.compile_graph);
 
     match_ranks(&mut dep_vals, &dep_infos, loc, block, ctx)?;
 

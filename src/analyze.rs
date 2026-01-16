@@ -299,6 +299,22 @@ impl ShapeInfo {
         }
     }
 
+    /// Returns `Some(shape)` if the rank is known
+    /// - `shape` includes `Some(length)` for every known axis length and `None` for every unknown axis length
+    /// Returns `None` if the rank is unknown
+    pub fn known_shape(&self) -> Option<Vec<Option<usize>>> {
+        match self {
+            ShapeInfo::Known(val) => Some(val.shape.iter().copied().map(Some).collect()),
+            ShapeInfo::Ranked(shape) => Some(
+                shape
+                    .iter()
+                    .map(|ax| ax.only_const().map(|x| x as usize))
+                    .collect(),
+            ),
+            ShapeInfo::Unranked { .. } => None,
+        }
+    }
+
     pub fn to_nvars(&self) -> usize {
         match self {
             ShapeInfo::Known(_) => 0,

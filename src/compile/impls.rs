@@ -15,11 +15,12 @@ use itertools::Itertools;
 use melior::{
     dialect::{
         cf, func, index,
-        ods::{arith, tensor, tosa},
+        ods::{arith, scf, tensor, tosa},
     },
     ir::{
         attribute::{
-            DenseElementsAttribute, FlatSymbolRefAttribute, FloatAttribute, IntegerAttribute,
+            DenseElementsAttribute, DenseI32ArrayAttribute, DenseI64ArrayAttribute,
+            FlatSymbolRefAttribute, FloatAttribute, IntegerAttribute,
         },
         operation::OperationBuilder,
         r#type::RankedTensorType,
@@ -131,7 +132,7 @@ pub fn cast_num<'c, 'a, 'u>(
     ctx: CompileContext<'c, 'u>,
 ) -> Result<Value<'c, 'a>> {
     let loc = span_to_loc(span, ctx);
-    let (_dep_infos, dep_vals) = get_deps(deps, fctx.compile_graph);
+    let (_dep_infos, _dep_types, dep_vals) = get_deps(deps, fctx.compile_graph);
     let dep_val = dep_vals[0];
 
     let out_comp_type = &comp_node.types[0];
@@ -146,20 +147,21 @@ pub fn cast_num<'c, 'a, 'u>(
     Ok(block.append_operation(op).result(0)?.into())
 }
 
-/// Returns `ValInfo`s and `Value`s for the dependencies at the given indices
+/// Returns `ValInfo`s, `CompType`s, and `Value`s for the dependencies at the given indices
 pub fn get_deps<'c, 'a, 'cg>(
     deps: StackSlice,
     compile_graph: &'cg FuncCompileGraph<'c, 'a, '_>,
-) -> (Vec<&'cg ValInfo>, Vec<Value<'c, 'a>>) {
+) -> (Vec<&'cg ValInfo>, Vec<&'cg CompType>, Vec<Value<'c, 'a>>) {
     deps.iter()
         .map(|&(dep_idx, out_i)| {
             let node = &compile_graph.node_weight(dep_idx).unwrap();
             (
                 &node.0.info.vals[out_i],
+                &node.0.types[out_i],
                 node.1.as_ref().expect("Argument not compiled")[out_i],
             )
         })
-        .unzip()
+        .multiunzip()
 }
 
 fn match_ranks<'c, 'a>(
@@ -183,6 +185,7 @@ fn match_ranks<'c, 'a>(
     Ok(())
 }
 
+/// If the given value is less than the given rank, add trailing length-1 axes to reach the minimum rank
 fn enforce_min_rank<'c, 'a>(
     rank: usize,
     val: &mut Value<'c, 'a>,
