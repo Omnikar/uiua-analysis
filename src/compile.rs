@@ -80,14 +80,6 @@ pub fn compile_test(uiua: &uiua::Uiua) -> Result<()> {
 
     let mut funclib = FuncLib::new();
 
-    let data_graph = DataGraph::from_node(&uiua.asm.root, &uiua.asm)?;
-    let infos = analyze_func_graph(&data_graph, &[], &mut funclib, uiua)?;
-    let func_id = uiua::FunctionId::Named("main".into());
-    let span = uiua.asm.root.span();
-    funclib
-        .funcs
-        .push(AnalyzedFunc::new(func_id, data_graph, infos, span));
-
     let mut extern_funcs =
         HashMap::<FunctionId, ((&str, Option<CompType>, Vec<CompType>), usize)>::new();
     let mut declared_extern_funcs = HashSet::<&str>::new();
@@ -126,6 +118,16 @@ pub fn compile_test(uiua: &uiua::Uiua) -> Result<()> {
                 );
             }
         }
+    }
+
+    if !uiua.asm.root.is_empty() {
+        let data_graph = DataGraph::from_node(&uiua.asm.root, &uiua.asm)?;
+        let infos = analyze_func_graph(&data_graph, &[], &mut funclib, uiua)?;
+        let func_id = uiua::FunctionId::Named("main".into());
+        let span = uiua.asm.root.span();
+        funclib
+            .funcs
+            .push(AnalyzedFunc::new(func_id, data_graph, infos, span));
     }
 
     for i in 0..funclib.funcs.len() {
