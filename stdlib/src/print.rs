@@ -9,6 +9,17 @@ fn show_num<T: std::fmt::Display + std::cmp::PartialOrd>(arr: ArrayRef<T>) {
             print!("×{axis}");
         }
         println!(" {}", std::any::type_name::<T>());
+        if !arr.data.is_empty() && !arr.shape.is_empty() {
+            print!("First: [{}", arr.data[0]);
+            for num in &arr.data[1..*arr.shape.last().unwrap().min(&5)] {
+                print!(" {num}");
+            }
+            if *arr.shape.last().unwrap() > 5 {
+                println!(" ···")
+            } else {
+                println!("]")
+            }
+        }
         println!(
             "Range: {}-{}",
             arr.data
