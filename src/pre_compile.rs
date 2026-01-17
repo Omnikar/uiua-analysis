@@ -81,7 +81,7 @@ impl CompType {
             unimplemented!()
         } else if val_info.range.float {
             CompType::Float(true)
-        } else if val_info.range == RangeInfo::bool() {
+        } else if val_info.range == RangeInfo::bool() || val_info.range.extent == 0 {
             CompType::Bool
         } else {
             CompType::Int(
@@ -179,6 +179,7 @@ impl Cast {
             (CompType::Int(false, l), CompType::Int(_, r)) if r > l => Some(UUp),
             (CompType::Int(false, l), CompType::Int(_, r)) if r < l => Some(UDown),
             (CompType::Bool, CompType::Int(_, _)) => Some(UUp),
+            (CompType::Int(_, _), CompType::Bool) => Some(UDown),
             (CompType::Int(true, l), CompType::Int(_, r)) if r > l => Some(SUp),
             (CompType::Int(true, l), CompType::Int(_, r)) if r < l => Some(SDown),
             (CompType::Int(_, l), CompType::Int(_, r)) if l == r => None,
@@ -192,7 +193,7 @@ impl Cast {
             (CompType::Int(_, 0..2), CompType::Char) => Some(UUp),
             (CompType::Int(_, 3), CompType::Char) => Some(UDown),
             (CompType::Int(_, 2), CompType::Char) => None,
-            _ => todo!(),
+            _ => todo!("Cast from {from} to {to}"),
         }
     }
 }
