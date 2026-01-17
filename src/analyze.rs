@@ -592,6 +592,35 @@ fn analyze_node<'u>(
     arg_infos: &[ValInfo],
     uiua: &'u Uiua,
 ) -> Result<()> {
+    let result = analyze_node_impl(
+        info_graph, nvars, reqs, subfuncs, funclib, idx, arg_infos, uiua,
+    );
+    if let Err(err) = &result
+        && let Some((data, _)) = info_graph.node_weight(idx)
+        && let Data::Node(node) = data
+        && let Some(span) = node.span()
+        && let Some(sp) = uiua.asm.spans.get(span).cloned()
+        && let Some(sp) = sp.code()
+        && let uiua::InputSrc::File(path) = sp.src
+        && let Some(path) = path.as_os_str().to_str()
+    {
+        bail!("{path}:{}:{}: {err}", sp.start.line, sp.start.col);
+    } else {
+        result
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn analyze_node_impl<'u>(
+    info_graph: &mut WorkingInfoGraph<'u>,
+    nvars: &mut usize,
+    reqs: &mut Vec<Condition>,
+    subfuncs: &mut Vec<(DataGraph<'u>, InfoMap)>,
+    funclib: &mut FuncLib<'u>,
+    idx: NodeIndex,
+    arg_infos: &[ValInfo],
+    uiua: &'u Uiua,
+) -> Result<()> {
     // Short circuit if this node has been analyzed already
     if info_graph
         .node_weight(idx)
