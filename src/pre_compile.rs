@@ -115,7 +115,7 @@ impl CompType {
             CompType::Bool => (0, RangeInfo::new(1, false, false)),
             CompType::Char => (1, RangeInfo::new(u32::MAX as u64, false, false)),
         };
-        ValInfo::new(typ, ShapeInfo::Ranked(SmallVec::new()), range)
+        ValInfo::new(typ, ShapeInfo::scalar(), range)
     }
 
     pub fn bit_width(&self) -> u8 {

@@ -7,7 +7,7 @@ use petgraph::graph::NodeIndex;
 use petgraph::stable_graph::StableGraph;
 use smallvec::{smallvec, SmallVec};
 use std::collections::HashMap;
-use uiua::{Node, Purity, RealArrayValue, Uiua, Value};
+use uiua::{BindingKind, Node, Purity, RealArrayValue, Uiua, Value};
 
 use crate::graph::{Data, DataGraph, Stack};
 use axis::{Axis, Condition};
@@ -126,7 +126,6 @@ fn try_match_func(
     func_infos: &FuncInfos,
     nvars: &mut usize,
 ) -> Option<Result<NodeInfo>> {
-    // dbg!(arg_infos, func_infos);
     // Axis variable substitutions to be made
     let mut substs = HashMap::new();
     for (arg, func_arg) in arg_infos.iter().zip(func_infos.args.iter()) {
@@ -279,6 +278,10 @@ impl FromIterator<ValInfo> for NodeInfo {
 }
 
 impl ShapeInfo {
+    pub fn scalar() -> Self {
+        Self::Ranked(SmallVec::new())
+    }
+
     /// Returns the rank if it is known
     pub fn rank(&self) -> Option<usize> {
         match self {
@@ -648,6 +651,7 @@ fn analyze_node<'u>(
             if func_result.is_none() {
                 let node = &ctx.uiua.asm[func];
                 let data_graph = DataGraph::from_node(node, &ctx.uiua.asm)?;
+
                 // Analyze the function on a generic set of arguments at this rank
                 // let generic_arg_infos = ctx
                 //     .dep_infos
@@ -671,6 +675,7 @@ fn analyze_node<'u>(
                 //         Info::new(info.typ, shape)
                 //     })
                 //     .collect_vec();
+
                 let generic_arg_infos = ctx
                     .dep_infos
                     .iter()
@@ -685,8 +690,36 @@ fn analyze_node<'u>(
                         }
                     })
                     .collect_vec();
-                let func_infos =
+                let mut func_infos =
                     analyze_func_graph(&data_graph, &generic_arg_infos, ctx.funclib, ctx.uiua)?;
+
+                // Handle externally-defined FFI functions
+                if let Some(binding_info) = ctx.uiua.asm.bindings.iter().find(
+                    |b| matches!(&b.kind, BindingKind::Func(this_func) if this_func.id == func.id),
+                ) && let Some(comment) = &binding_info.meta.comment
+                    && let Some(sig_str) = comment
+                        .text
+                        .lines()
+                        .find_map(|l| l.strip_prefix("FFI import! "))
+                    && let (_, Some(out_comp_type), _) = crate::compile::parse_ffi_sig(sig_str)?
+                {
+                    let (out_idx, out_i) = data_graph
+                        .stack
+                        .first()
+                        .context("Non-void FFI function missing output")?;
+                    let out_info = func_infos
+                        .map
+                        .get_mut(out_idx)
+                        .unwrap()
+                        .vals
+                        .get_mut(*out_i)
+                        .unwrap();
+                    *out_info = out_comp_type.to_scalar_info();
+
+                    func_infos.outs.clear();
+                    func_infos.outs.push(out_info.clone());
+                }
+
                 ctx.funclib.funcs.push(AnalyzedFunc::new(
                     func.id.clone(),
                     data_graph,

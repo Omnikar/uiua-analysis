@@ -491,7 +491,7 @@ fn compile_ffi_import_func<'c, 'u, 'a>(
         return_vals.push(tensor_val);
     }
 
-    block.append_operation(func::r#return(dbg!(&return_vals), loc));
+    block.append_operation(func::r#return(&return_vals, loc));
 
     let region = Region::new();
     region.append_block(block);
@@ -508,7 +508,7 @@ fn compile_ffi_import_func<'c, 'u, 'a>(
     Ok(func)
 }
 
-fn parse_ffi_sig(sig_str: &str) -> Result<(&str, Option<CompType>, Vec<CompType>)> {
+pub fn parse_ffi_sig(sig_str: &str) -> Result<(&str, Option<CompType>, Vec<CompType>)> {
     fn word_to_type(word: &str) -> Result<Option<CompType>> {
         use CompType::*;
         Ok(match word {
