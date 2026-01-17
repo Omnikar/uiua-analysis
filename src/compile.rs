@@ -315,6 +315,8 @@ fn compile_ffi_func<'c, 'u>(
         bail!("FFI function cannot have more than one output");
     }
 
+    let mut return_vals = Vec::with_capacity(outs.len());
+
     if let Some(out_type) = out_comp_type {
         let out_elem_type = mk_elem_type(out_type, ctx);
 
@@ -323,8 +325,10 @@ fn compile_ffi_func<'c, 'u>(
         let extract_op = tensor::extract(ctx.context, out_elem_type, out_val, &[], loc);
         let extracted_val: Value = block.append_operation(extract_op.into()).result(0)?.into();
 
-        block.append_operation(func::r#return(&[extracted_val], loc));
+        return_vals.push(extracted_val);
     }
+
+    block.append_operation(func::r#return(&return_vals, loc));
 
     let region = Region::new();
     region.append_block(block);
