@@ -10,7 +10,7 @@ fn show_num<T: std::fmt::Display + std::cmp::PartialOrd>(arr: ArrayRef<T>) {
         }
         println!(" {}", std::any::type_name::<T>());
         if !arr.data.is_empty() && !arr.shape.is_empty() {
-            print!("First: [{}", arr.data[0]);
+            print!("  First: [{}", arr.data[0]);
             for num in &arr.data[1..*arr.shape.last().unwrap().min(&5)] {
                 print!(" {num}");
             }
@@ -20,33 +20,35 @@ fn show_num<T: std::fmt::Display + std::cmp::PartialOrd>(arr: ArrayRef<T>) {
                 println!("]")
             }
         }
-        println!(
-            "Range: {}-{}",
-            arr.data
-                .iter()
-                .min_by(|a, b| {
-                    match a.le(b) {
-                        true => std::cmp::Ordering::Less,
-                        false => std::cmp::Ordering::Greater,
-                    }
-                })
-                .unwrap(),
-            arr.data
-                .iter()
-                .max_by(|a, b| {
-                    match a.ge(b) {
-                        true => std::cmp::Ordering::Greater,
-                        false => std::cmp::Ordering::Less,
-                    }
-                })
-                .unwrap()
-        );
+        if arr.data.len() < 1_000_000 {
+            println!(
+                "  Range: {}-{}",
+                arr.data
+                    .iter()
+                    .min_by(|a, b| {
+                        match a.le(b) {
+                            true => std::cmp::Ordering::Less,
+                            false => std::cmp::Ordering::Greater,
+                        }
+                    })
+                    .unwrap(),
+                arr.data
+                    .iter()
+                    .max_by(|a, b| {
+                        match a.ge(b) {
+                            true => std::cmp::Ordering::Greater,
+                            false => std::cmp::Ordering::Less,
+                        }
+                    })
+                    .unwrap()
+            )
+        }
         let size = arr.data.len() * size_of::<T>();
         match size {
-            1_000_000_000.. => println!("Size: {} GB", size as f32 / 1e9),
-            1_000_000.. => println!("Size: {} MB", size as f32 / 1e6),
-            1_000.. => println!("Size: {} KB", size as f32 / 1e3),
-            0.. => println!("Size: {} B", size),
+            1_000_000_000.. => println!("  Size: {} GB", size as f32 / 1e9),
+            1_000_000.. => println!("  Size: {} MB", size as f32 / 1e6),
+            1_000.. => println!("  Size: {} KB", size as f32 / 1e3),
+            0.. => println!("  Size: {} B", size),
         }
         println!("╰─");
     } else if arr.rank == 0 {
