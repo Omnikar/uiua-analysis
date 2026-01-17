@@ -184,7 +184,7 @@ impl Cast {
             (CompType::Int(true, l), CompType::Int(_, r)) if r < l => Some(SDown),
             (CompType::Int(_, l), CompType::Int(_, r)) if l == r => None,
 
-            (CompType::Int(false, _), CompType::Float(_)) => Some(UtoF),
+            (CompType::Int(false, _) | CompType::Bool, CompType::Float(_)) => Some(UtoF),
             (CompType::Int(true, _), CompType::Float(_)) => Some(StoF),
 
             (CompType::Char, CompType::Int(_, 3)) => Some(UUp),
