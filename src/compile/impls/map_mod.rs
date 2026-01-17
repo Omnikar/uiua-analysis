@@ -336,8 +336,8 @@ pub fn rows<'c, 'a, 'u>(
         ..*fctx
     };
 
-    for root in subfunc_graph.roots(&ctx.uiua.asm) {
-        compile_node(root, &for_block, &mut sub_fctx, ctx)?;
+    for idx in sub_fctx.compile_graph.node_indices().collect_vec() {
+        compile_node(idx, &for_block, &mut sub_fctx, ctx)?;
     }
 
     let insert_vals = vals_from_cg(&pre_compile_graph.stack, &compile_graph)?;
