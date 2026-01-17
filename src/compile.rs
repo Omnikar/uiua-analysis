@@ -23,7 +23,10 @@ use melior::{
 };
 use petgraph::{data::DataMap, graph::NodeIndex, stable_graph::StableGraph};
 use smallvec::smallvec;
-use std::{collections::HashMap, io::Write};
+use std::{
+    collections::{HashMap, HashSet},
+    io::Write,
+};
 use uiua::{FunctionId, Node, SysOp};
 
 use crate::{
@@ -87,6 +90,7 @@ pub fn compile_test(uiua: &uiua::Uiua) -> Result<()> {
 
     let mut extern_funcs =
         HashMap::<FunctionId, ((&str, Option<CompType>, Vec<CompType>), usize)>::new();
+    let mut declared_extern_funcs = HashSet::<&str>::new();
 
     for binding in &uiua.asm.bindings {
         let uiua::BindingKind::Func(func) = &binding.kind else {
@@ -137,6 +141,7 @@ pub fn compile_test(uiua: &uiua::Uiua) -> Result<()> {
                 in_types,
                 *span,
                 &module,
+                &mut declared_extern_funcs,
                 ctx,
             )?;
 
@@ -377,14 +382,15 @@ fn compile_ffi_export_func<'c, 'u>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn compile_ffi_import_func<'c, 'u>(
+fn compile_ffi_import_func<'c, 'u, 'a>(
     funclib: &FuncLib<'u>,
     idx: usize,
-    func_name: &str,
+    func_name: &'a str,
     out_comp_type: Option<&CompType>,
     in_types: &[CompType],
     span: usize,
     module: &Module<'c>,
+    declared_extern_funcs: &mut HashSet<&'a str>,
     ctx: CompileContext<'c, 'u>,
 ) -> Result<Operation<'c>> {
     let func = &funclib.funcs[idx];
@@ -443,18 +449,24 @@ fn compile_ffi_import_func<'c, 'u>(
         in_vals.push(scalar_val);
     }
 
-    let ffi_func = func::func(
-        ctx.context,
-        StringAttribute::new(ctx.context, func_name),
-        TypeAttribute::new(FunctionType::new(ctx.context, &inner_sig_in, &inner_sig_out).into()),
-        Region::new(),
-        &[(
-            Identifier::new(ctx.context, "sym_visibility"),
-            StringAttribute::new(ctx.context, "private").into(),
-        )],
-        loc,
-    );
-    module.body().append_operation(ffi_func);
+    if !declared_extern_funcs.contains(&func_name) {
+        let ffi_func = func::func(
+            ctx.context,
+            StringAttribute::new(ctx.context, func_name),
+            TypeAttribute::new(
+                FunctionType::new(ctx.context, &inner_sig_in, &inner_sig_out).into(),
+            ),
+            Region::new(),
+            &[(
+                Identifier::new(ctx.context, "sym_visibility"),
+                StringAttribute::new(ctx.context, "private").into(),
+            )],
+            loc,
+        );
+        module.body().append_operation(ffi_func);
+
+        declared_extern_funcs.insert(func_name);
+    }
 
     let call_op = func::call(
         ctx.context,
