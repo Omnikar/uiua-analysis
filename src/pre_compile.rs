@@ -193,6 +193,7 @@ impl Cast {
             (CompType::Int(_, 0..2), CompType::Char) => Some(UUp),
             (CompType::Int(_, 3), CompType::Char) => Some(UDown),
             (CompType::Int(_, 2), CompType::Char) => None,
+            (CompType::Float(d1), CompType::Float(d2)) if d1 == d2 => None,
             _ => todo!("Cast from {from} to {to}"),
         }
     }
