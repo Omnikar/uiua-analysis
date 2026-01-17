@@ -329,8 +329,7 @@ pub fn first<'c, 'a, 'u>(
     let (dep_infos, _dep_types, dep_vals) = get_deps(deps, fctx.compile_graph);
     let (dep_info, dep_val) = (dep_infos[0], dep_vals[0]);
 
-    let out_type: Type =
-        mk_type_from_comp_shape(&comp_node.types[0], &comp_node.info.vals[0].shape, ctx);
+    let out_type = mk_type_from_comp_shape(&comp_node.types[0], &comp_node.info.vals[0].shape, ctx);
 
     match dep_info
         .shape
@@ -410,4 +409,35 @@ pub fn first<'c, 'a, 'u>(
         .build()?;
 
     Ok(one_op_val(block, get_op)?)
+}
+
+pub fn reverse<'c, 'a, 'u>(
+    comp_node: &CompNode,
+    deps: &[(NodeIndex, usize)],
+    span: usize,
+    block: &'a Block<'c>,
+    fctx: &FuncCompileContext<'c, 'a, 'u, '_, '_, '_>,
+    ctx: CompileContext<'c, 'u>,
+) -> Result<Value<'c, 'a>> {
+    let loc = span_to_loc(span, ctx);
+
+    let (dep_infos, _dep_types, dep_vals) = get_deps(deps, fctx.compile_graph);
+    let (dep_info, dep_val) = (dep_infos[0], dep_vals[0]);
+
+    let out_type = mk_type_from_comp_shape(&comp_node.types[0], &comp_node.info.vals[0].shape, ctx);
+
+    match dep_info.shape.rank() {
+        Some(1..) => {}
+        Some(0) => return Ok(dep_val),
+        None => todo!("Reverse unranked tensor"),
+    }
+
+    let reverse_op = tosa::reverse(
+        ctx.context,
+        out_type,
+        dep_val,
+        IntegerAttribute::new(ctx.int_types[2], 0),
+        loc,
+    );
+    Ok(one_op_val(block, reverse_op)?)
 }
