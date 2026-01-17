@@ -90,7 +90,7 @@ pub fn compile_test(uiua: &uiua::Uiua) -> Result<()> {
         module.body().append_operation(func);
     }
 
-    // Compile `FFI!` functions
+    // Compile `FFI export!` functions
     for binding in &uiua.asm.bindings {
         let uiua::BindingKind::Func(func) = &binding.kind else {
             continue;
@@ -100,7 +100,7 @@ pub fn compile_test(uiua: &uiua::Uiua) -> Result<()> {
         };
         let node = &uiua.asm[func];
         for line in comment.text.lines() {
-            if let Some(sig_str) = line.strip_prefix("FFI! ") {
+            if let Some(sig_str) = line.strip_prefix("FFI export! ") {
                 let (func_name, out_type, in_types) = parse_ffi_sig(sig_str)?;
 
                 let func = compile_ffi_func(
