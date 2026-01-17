@@ -23,7 +23,7 @@ pub fn perv_monad<'c, 'a, 'u>(
 
     let op = op_builder.build()?;
 
-    Ok(block.append_operation(op).result(0)?.into())
+    Ok(one_op_val(block, op)?)
 }
 
 pub fn sub_const<'c, 'a, 'u>(
@@ -48,23 +48,20 @@ pub fn sub_const<'c, 'a, 'u>(
     let elem_type = dep_rtt.element();
     let num_tensor_type: Type = RankedTensorType::new(&vec![1; rank], elem_type, None).into();
 
-    let num_val: Value = block
-        .append_operation(
-            arith::constant(
-                ctx.context,
+    let num_val = one_op_val(
+        block,
+        arith::constant(
+            ctx.context,
+            num_tensor_type,
+            DenseElementsAttribute::new(
                 num_tensor_type,
-                DenseElementsAttribute::new(
-                    num_tensor_type,
-                    &[IntegerAttribute::new(elem_type, num).into()],
-                )?
-                .into(),
-                loc,
-            )
+                &[IntegerAttribute::new(elem_type, num).into()],
+            )?
             .into(),
-        )
-        .result(0)?
-        .into();
+            loc,
+        ),
+    )?;
 
     let sub_op = tosa::sub(ctx.context, out_type, num_val, dep_val, loc);
-    Ok(block.append_operation(sub_op.into()).result(0)?.into())
+    Ok(one_op_val(block, sub_op)?)
 }

@@ -36,7 +36,7 @@ pub fn rows<'c, 'a, 'u>(
                 None => {
                     let dim_op =
                         tensor::dim(ctx.context, ctx.index_type, dep_vals[0], zero_val, loc);
-                    let len_val = block.append_operation(dim_op.into()).result(0)?.into();
+                    let len_val = one_op_val(block, dim_op)?;
                     Some((None, len_val))
                 }
             },
@@ -84,7 +84,7 @@ pub fn rows<'c, 'a, 'u>(
         // If there are no non-length-1 statically known lengths, use the first unknown length
         else if let Some(i) = lens.iter().position(Option::is_none) {
             let dim_op = tensor::dim(ctx.context, ctx.index_type, dep_vals[i], zero_val, loc);
-            let len_val = block.append_operation(dim_op.into()).result(0)?.into();
+            let len_val = one_op_val(block, dim_op)?;
             ref_len = (None, len_val);
             ref_len_i = i;
         }
@@ -105,7 +105,7 @@ pub fn rows<'c, 'a, 'u>(
                 None => {
                     let dim_op =
                         tensor::dim(ctx.context, ctx.index_type, dep_vals[dep_i], zero_val, loc);
-                    let len_val: Value = block.append_operation(dim_op.into()).result(0)?.into();
+                    let len_val = one_op_val(block, dim_op)?;
                     (None, len_val)
                 }
             };
@@ -134,7 +134,7 @@ pub fn rows<'c, 'a, 'u>(
                 IntegerAttribute::new(ctx.int_types[3], 0).into(),
                 loc,
             );
-            let cmp_val: Value = block.append_operation(cmp_op.into()).result(0)?.into();
+            let cmp_val = one_op_val(block, cmp_op)?;
 
             let assert_op = cf::assert(ctx.context, cmp_val, "Array lengths are incompatible", loc);
             block.append_operation(assert_op);
@@ -239,7 +239,7 @@ pub fn rows<'c, 'a, 'u>(
             let out_type: Type = RankedTensorType::new(&out_shape, elem_type, None).into();
 
             let empty_op = tensor::empty(ctx.context, out_type, &[], loc);
-            let empty_val: Value = block.append_operation(empty_op.into()).result(0)?.into();
+            let empty_val = one_op_val(block, empty_op)?;
 
             out_row_types.push(row_type);
             out_types.push(out_type);
@@ -283,8 +283,7 @@ pub fn rows<'c, 'a, 'u>(
                         const_int(i as i64 + 1, ctx.index_type, &for_block, ctx, loc)?;
 
                     let dim_op = tensor::dim(ctx.context, ctx.index_type, dep_val, dim_i_val, loc);
-                    let len_val: Value =
-                        for_block.append_operation(dim_op.into()).result(0)?.into();
+                    let len_val = one_op_val(&for_block, dim_op)?;
 
                     size_vals.push(len_val);
                 }
@@ -322,11 +321,7 @@ pub fn rows<'c, 'a, 'u>(
                 )])
                 .build()?;
 
-            for_block
-                .append_operation(get_op)
-                .result(0)
-                .map_err(Into::into)
-                .map(Into::into)
+            Ok(one_op_val(&for_block, get_op)?)
         })
         .collect::<Result<_>>()?;
 
@@ -356,7 +351,7 @@ pub fn rows<'c, 'a, 'u>(
                     const_int(i as i64 + 1, ctx.index_type, &for_block, ctx, loc)?;
 
                 let dim_op = tensor::dim(ctx.context, ctx.index_type, insert_val, dim_i_val, loc);
-                let len_val: Value = for_block.append_operation(dim_op.into()).result(0)?.into();
+                let len_val = one_op_val(&for_block, dim_op)?;
 
                 size_vals.push(len_val);
             }
@@ -391,7 +386,7 @@ pub fn rows<'c, 'a, 'u>(
             )])
             .build()?;
 
-        let out_acc: Value = for_block.append_operation(insert_op).result(0)?.into();
+        let out_acc = one_op_val(&for_block, insert_op)?;
         yield_vals.push(out_acc);
     }
 

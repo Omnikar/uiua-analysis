@@ -27,18 +27,18 @@ pub fn len<'c, 'a, 'u>(
         (Some(Some(Some(len))), _) | (Some(None), len) => {
             let scalar_val = const_int(len as i64, out_elem_type, block, ctx, loc)?;
             let tensor_op = tensor::from_elements(ctx.context, out_type, &[scalar_val], loc);
-            let tensor_val: Value = block.append_operation(tensor_op.into()).result(0)?.into();
+            let tensor_val = one_op_val(block, tensor_op)?;
             Ok(tensor_val)
         }
         // Known rank ≥1 with unknown first axis length
         (Some(Some(None)), _) => {
             let zero_val = const_int(0, ctx.index_type, block, ctx, loc)?;
             let dim_op = tensor::dim(ctx.context, ctx.index_type, dep_val, zero_val, loc);
-            let dim_val: Value = block.append_operation(dim_op.into()).result(0)?.into();
+            let dim_val = one_op_val(block, dim_op)?;
             let cast_op = index::castu(dim_val, out_elem_type, loc);
-            let cast_val: Value = block.append_operation(cast_op).result(0)?.into();
+            let cast_val = one_op_val(block, cast_op)?;
             let tensor_op = tensor::from_elements(ctx.context, out_type, &[cast_val], loc);
-            let tensor_val: Value = block.append_operation(tensor_op.into()).result(0)?.into();
+            let tensor_val = one_op_val(block, tensor_op)?;
             Ok(tensor_val)
         }
         // Rank unknown
@@ -112,21 +112,18 @@ fn scalar_range<'c, 'a, 'u>(
     if dim == DYN_AX || signed {
         let dep_elem_type = RankedTensorType::try_from(dep_val.r#type())?.element();
         let extract_op = tensor::extract(ctx.context, dep_elem_type, dep_val, &[], loc);
-        let scalar_val: Value = block.append_operation(extract_op.into()).result(0)?.into();
+        let scalar_val = one_op_val(block, extract_op)?;
 
         if dim == DYN_AX {
             let abs_val: Value = if signed {
-                block
-                    .append_operation(tosa::abs(ctx.context, out_elem_type, scalar_val, loc).into())
-                    .result(0)?
-                    .into()
+                one_op_val(
+                    block,
+                    tosa::abs(ctx.context, out_elem_type, scalar_val, loc),
+                )?
             } else {
                 scalar_val
             };
-            let index_val: Value = block
-                .append_operation(index::castu(abs_val, ctx.index_type, loc))
-                .result(0)?
-                .into();
+            let index_val = one_op_val(block, index::castu(abs_val, ctx.index_type, loc))?;
             dyn_len.push(index_val);
         }
 
@@ -141,32 +138,32 @@ fn scalar_range<'c, 'a, 'u>(
                 IntegerAttribute::new(ctx.int_types[3], 2).into(),
                 loc,
             );
-            let cmp_val: Value = block.append_operation(cmp_op.into()).result(0)?.into();
-            let cmp_casted_val: Value = block
-                .append_operation(arith::extui(ctx.context, dep_elem_type, cmp_val, loc).into())
-                .result(0)?
-                .into();
+            let cmp_val = one_op_val(block, cmp_op)?;
+            let cmp_casted_val = one_op_val(
+                block,
+                arith::extui(ctx.context, dep_elem_type, cmp_val, loc),
+            )?;
             let neg_op = arith::subi(ctx.context, zero_val, cmp_casted_val, loc);
-            let neg_val: Value = block.append_operation(neg_op.into()).result(0)?.into();
+            let neg_val = one_op_val(block, neg_op)?;
             neg = Some(neg_val);
         }
     }
 
     let generate_block = Block::new(&[(ctx.index_type, loc)]);
     let coord_val: Value = generate_block.argument(0)?.into();
-    let mut int_coord_val: Value = generate_block
-        .append_operation(if signed {
+    let mut int_coord_val: Value = one_op_val(
+        &generate_block,
+        if signed {
             index::casts(coord_val, out_elem_type, loc)
         } else {
             index::castu(coord_val, out_elem_type, loc)
-        })
-        .result(0)?
-        .into();
+        },
+    )?;
     if let Some(neg) = neg {
-        int_coord_val = generate_block
-            .append_operation(arith::xori(ctx.context, int_coord_val, neg, loc).into())
-            .result(0)?
-            .into();
+        int_coord_val = one_op_val(
+            &generate_block,
+            arith::xori(ctx.context, int_coord_val, neg, loc),
+        )?;
     }
     generate_block.append_operation(tensor::r#yield(ctx.context, int_coord_val, loc).into());
     let generate_region = Region::new();
@@ -174,7 +171,7 @@ fn scalar_range<'c, 'a, 'u>(
 
     let generate_op = tensor::generate(ctx.context, out_type, &dyn_len, generate_region, loc);
 
-    let range_val: Value = block.append_operation(generate_op.into()).result(0)?.into();
+    let range_val = one_op_val(block, generate_op)?;
 
     Ok(range_val)
 }
@@ -230,21 +227,18 @@ fn multidim_range<'c, 'a, 'u>(
 
         let extract_op = tensor::extract(ctx.context, dep_elem_type, dep_val, &[dim_i_val], loc);
 
-        let scalar_val: Value = block.append_operation(extract_op.into()).result(0)?.into();
+        let scalar_val = one_op_val(block, extract_op)?;
 
         if dim == DYN_AX {
             let abs_val: Value = if signed {
-                block
-                    .append_operation(tosa::abs(ctx.context, out_elem_type, scalar_val, loc).into())
-                    .result(0)?
-                    .into()
+                one_op_val(
+                    block,
+                    tosa::abs(ctx.context, out_elem_type, scalar_val, loc),
+                )?
             } else {
                 scalar_val
             };
-            let index_val: Value = block
-                .append_operation(index::castu(abs_val, ctx.index_type, loc))
-                .result(0)?
-                .into();
+            let index_val: Value = one_op_val(block, index::castu(abs_val, ctx.index_type, loc))?;
             dyn_lens.push(index_val);
         }
 
@@ -259,13 +253,13 @@ fn multidim_range<'c, 'a, 'u>(
                 IntegerAttribute::new(ctx.int_types[3], 2).into(),
                 loc,
             );
-            let cmp_val: Value = block.append_operation(cmp_op.into()).result(0)?.into();
-            let cmp_casted_val: Value = block
-                .append_operation(arith::extui(ctx.context, dep_elem_type, cmp_val, loc).into())
-                .result(0)?
-                .into();
+            let cmp_val = one_op_val(block, cmp_op)?;
+            let cmp_casted_val = one_op_val(
+                block,
+                arith::extui(ctx.context, dep_elem_type, cmp_val, loc),
+            )?;
             let neg_op = arith::subi(ctx.context, zero_val, cmp_casted_val, loc);
-            let neg_val: Value = block.append_operation(neg_op.into()).result(0)?.into();
+            let neg_val = one_op_val(block, neg_op)?;
             neg_mask.push(neg_val);
         }
     }
@@ -278,12 +272,10 @@ fn multidim_range<'c, 'a, 'u>(
     let coord_idx_val = coord_vals.pop().unwrap();
     let coords_tensor_type: Type =
         RankedTensorType::new(&[coord_len as u64], ctx.index_type, None).into();
-    let coords_tensor_val: Value = generate_block
-        .append_operation(
-            tensor::from_elements(ctx.context, coords_tensor_type, &coord_vals, loc).into(),
-        )
-        .result(0)?
-        .into();
+    let coords_tensor_val: Value = one_op_val(
+        &generate_block,
+        tensor::from_elements(ctx.context, coords_tensor_type, &coord_vals, loc),
+    )?;
 
     let extract_op = tensor::extract(
         ctx.context,
@@ -292,38 +284,33 @@ fn multidim_range<'c, 'a, 'u>(
         &[coord_idx_val],
         loc,
     );
-    let coord_val: Value = generate_block
-        .append_operation(extract_op.into())
-        .result(0)?
-        .into();
-    let int_coord_val: Value = generate_block
-        .append_operation(if signed {
+    let coord_val = one_op_val(&generate_block, extract_op)?;
+    let int_coord_val: Value = one_op_val(
+        &generate_block,
+        if signed {
             index::casts(coord_val, out_elem_type, loc)
         } else {
             index::castu(coord_val, out_elem_type, loc)
-        })
-        .result(0)?
-        .into();
+        },
+    )?;
     generate_block.append_operation(tensor::r#yield(ctx.context, int_coord_val, loc).into());
 
     let generate_region = Region::new();
     generate_region.append_block(generate_block);
     let generate_op = tensor::generate(ctx.context, out_type, &dyn_lens, generate_region, loc);
 
-    let mut range_val: Value = block.append_operation(generate_op.into()).result(0)?.into();
+    let mut range_val = one_op_val(block, generate_op)?;
 
     if signed {
         let mut neg_mask_dims = vec![1; coord_len];
         neg_mask_dims.push(neg_mask.len() as u64);
         let neg_mask_type: Type = RankedTensorType::new(&neg_mask_dims, out_elem_type, None).into();
-        let neg_mask_val: Value = block
-            .append_operation(
-                tensor::from_elements(ctx.context, neg_mask_type, &neg_mask, loc).into(),
-            )
-            .result(0)?
-            .into();
+        let neg_mask_val: Value = one_op_val(
+            block,
+            tensor::from_elements(ctx.context, neg_mask_type, &neg_mask, loc),
+        )?;
         let xor_op = tosa::bitwise_xor(ctx.context, out_type, range_val, neg_mask_val, loc);
-        range_val = block.append_operation(xor_op.into()).result(0)?.into();
+        range_val = one_op_val(block, xor_op)?;
     }
 
     Ok(range_val)

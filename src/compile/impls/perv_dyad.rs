@@ -27,26 +27,23 @@ pub fn arith<'c, 'a, 'u>(
 
     if op_name == "tosa.mul" {
         let scalar_type = RankedTensorType::new(&[1], ctx.int_types[0], None).into();
-        let zero_val: Value = block
-            .append_operation(
-                arith::constant(
-                    ctx.context,
+        let zero_val = one_op_val(
+            block,
+            arith::constant(
+                ctx.context,
+                scalar_type,
+                DenseElementsAttribute::new(
                     scalar_type,
-                    DenseElementsAttribute::new(
-                        scalar_type,
-                        &[IntegerAttribute::new(ctx.int_types[0], 0).into()],
-                    )?
-                    .into(),
-                    loc,
-                )
+                    &[IntegerAttribute::new(ctx.int_types[0], 0).into()],
+                )?
                 .into(),
-            )
-            .result(0)?
-            .into();
+                loc,
+            ),
+        )?;
         op_builder = op_builder.add_operands(&[zero_val]);
     }
 
     let op = op_builder.build()?;
 
-    Ok(block.append_operation(op).result(0)?.into())
+    Ok(one_op_val(block, op)?)
 }

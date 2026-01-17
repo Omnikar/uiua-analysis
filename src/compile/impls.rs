@@ -31,7 +31,7 @@ use petgraph::graph::NodeIndex;
 
 use super::{
     compile_node, const_int, dims_from_shape_info, mk_elem_type, mk_tensor_type, mk_type,
-    mk_type_from_comp_shape, name_mangle, new_compile_graph, span_to_loc, vals_from_cg,
+    mk_type_from_comp_shape, name_mangle, new_compile_graph, one_op_val, span_to_loc, vals_from_cg,
     CompileContext, FuncCompileContext, FuncCompileGraph, DYN_AX,
 };
 use crate::{
@@ -82,7 +82,7 @@ pub fn constant<'c, 'a>(
     let dense_attr = DenseElementsAttribute::new(val_type, &elem_attrs)?;
 
     let op = arith::constant(ctx.context, val_type, dense_attr.into(), loc);
-    Ok(block.append_operation(op.into()).result(0)?.into())
+    Ok(one_op_val(block, op)?)
 }
 
 pub fn call<'c, 'a, 'u>(
@@ -144,7 +144,7 @@ pub fn cast_num<'c, 'a, 'u>(
         .add_operands(&[dep_val])
         .build()?;
 
-    Ok(block.append_operation(op).result(0)?.into())
+    Ok(one_op_val(block, op)?)
 }
 
 /// Returns `ValInfo`s, `CompType`s, and `Value`s for the dependencies at the given indices
@@ -211,15 +211,12 @@ fn enforce_min_rank<'c, 'a>(
     let out_type = RankedTensorType::new(&shape, elem_type, None).into();
 
     let shape_type = RankedTensorType::new(&[rank as u64], ctx.index_type, None).into();
-    let shape_val: Value = block
-        .append_operation(tensor::empty(ctx.context, shape_type, &[], loc).into())
-        .result(0)?
-        .into();
+    let shape_val = one_op_val(block, tensor::empty(ctx.context, shape_type, &[], loc))?;
     for (dim_i, &dim) in shape.iter().enumerate() {
         let dim_i_val = const_int(dim_i as i64, ctx.index_type, block, ctx, loc)?;
         let dim_val: Value = if dim == DYN_AX {
             let get_dim_op = tensor::dim(ctx.context, ctx.index_type, *val, dim_i_val, loc);
-            block.append_operation(get_dim_op.into()).result(0)?.into()
+            one_op_val(block, get_dim_op)?
         } else {
             const_int(dim as i64, ctx.index_type, block, ctx, loc)?
         };
@@ -236,7 +233,7 @@ fn enforce_min_rank<'c, 'a>(
 
     let reshape_op = tensor::reshape(ctx.context, out_type, *val, shape_val, loc);
 
-    *val = block.append_operation(reshape_op.into()).result(0)?.into();
+    *val = one_op_val(block, reshape_op)?;
 
     Ok(())
 }

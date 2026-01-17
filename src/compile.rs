@@ -330,7 +330,7 @@ fn compile_ffi_export_func<'c, 'u>(
             &[block.argument(arg_i)?.into()],
             loc,
         );
-        let tensor_val: Value = block.append_operation(tensor_op.into()).result(0)?.into();
+        let tensor_val = one_op_val(&block, tensor_op)?;
         in_tensors.push(tensor_val);
     }
 
@@ -361,7 +361,7 @@ fn compile_ffi_export_func<'c, 'u>(
         let out_val = outs.pop().context("Non-void FFI function missing output")?;
 
         let extract_op = tensor::extract(ctx.context, out_elem_type, out_val, &[], loc);
-        let extracted_val: Value = block.append_operation(extract_op.into()).result(0)?.into();
+        let extracted_val = one_op_val(&block, extract_op)?;
 
         return_vals.push(extracted_val);
     }
@@ -435,7 +435,7 @@ fn compile_ffi_import_func<'c, 'u, 'a>(
             .element();
 
         let extract_op = tensor::extract(ctx.context, elem_type, arg_val, &[], loc);
-        let mut scalar_val: Value = block.append_operation(extract_op.into()).result(0)?.into();
+        let mut scalar_val = one_op_val(&block, extract_op)?;
 
         let elem_comp_type = CompType::from_info(&func.infos.args[arg_i]);
 
@@ -445,7 +445,7 @@ fn compile_ffi_import_func<'c, 'u, 'a>(
                 .add_operands(&[scalar_val])
                 .build()?;
 
-            scalar_val = block.append_operation(op).result(0)?.into();
+            scalar_val = one_op_val(&block, op)?;
         }
 
         in_vals.push(scalar_val);
@@ -489,7 +489,7 @@ fn compile_ffi_import_func<'c, 'u, 'a>(
     if let Some(func_out_val) = func_out_val {
         let tensor_type: Type = outer_sig_out[0];
         let tensor_op = tensor::from_elements(ctx.context, tensor_type, &[func_out_val], loc);
-        let tensor_val: Value = block.append_operation(tensor_op.into()).result(0)?.into();
+        let tensor_val = one_op_val(&block, tensor_op)?;
         return_vals.push(tensor_val);
     }
 
@@ -700,6 +700,9 @@ fn compile_node<'c, 'a, 'u>(
         Op::Data(Data::Node(Node::Prim(Range, span))) => {
             vec![impls::range(&comp_node, &deps, *span, block, fctx, ctx)?]
         }
+        Op::Data(Data::Node(Node::Prim(First, span))) => {
+            vec![impls::first(&comp_node, &deps, *span, block, fctx, ctx)?]
+        }
 
         // -- Mapping Modifiers --
         Op::Data(Data::Node(Node::Mod(Rows, _funcs, span))) => {
@@ -794,19 +797,20 @@ fn const_int<'a, 'c>(
     ctx: CompileContext<'c, '_>,
     loc: Location<'c>,
 ) -> Result<Value<'c, 'a>> {
-    block
-        .append_operation(
-            arith::constant(
-                ctx.context,
-                typ,
-                IntegerAttribute::new(typ, val).into(),
-                loc,
-            )
-            .into(),
-        )
-        .result(0)
-        .map(Into::into)
-        .map_err(Into::into)
+    let op = arith::constant(
+        ctx.context,
+        typ,
+        IntegerAttribute::new(typ, val).into(),
+        loc,
+    );
+    one_op_val(block, op).map_err(Into::into)
+}
+
+fn one_op_val<'c, 'a>(
+    block: &'a Block<'c>,
+    op: impl Into<Operation<'c>>,
+) -> Result<Value<'c, 'a>, melior::Error> {
+    block.append_operation(op.into()).result(0).map(Into::into)
 }
 
 fn vals_from_cg<'c, 'a, 'u, 'b>(
@@ -848,17 +852,11 @@ fn tensor_to_unranked_memref<'c, 'a>(
         ))
     };
 
-    let memref_val: Value = block
-        .append_operation(to_buffer_op.into())
-        .result(0)?
-        .into();
+    let memref_val = one_op_val(block, to_buffer_op)?;
 
     let memref_cast_op = memref::cast(ctx.context, unranked_memref_type, memref_val, loc);
 
-    let unranked_memref_val: Value = block
-        .append_operation(memref_cast_op.into())
-        .result(0)?
-        .into();
+    let unranked_memref_val = one_op_val(block, memref_cast_op)?;
 
     Ok(unranked_memref_val)
 }
@@ -955,10 +953,10 @@ fn print<'c, 'a, 'u>(
         let for_block = Block::new(&[(ctx.index_type, loc); 2]);
         let dim_i_val: Value = for_block.argument(0)?.into();
         let dim_op = tensor::dim(ctx.context, ctx.index_type, arg_val, dim_i_val, loc);
-        let dim_val: Value = for_block.append_operation(dim_op.into()).result(0)?.into();
+        let dim_val = one_op_val(&for_block, dim_op)?;
         let old_size_val: Value = for_block.argument(1)?.into();
         let mul_op = index::mul(old_size_val, dim_val, loc);
-        let new_size_val: Value = for_block.append_operation(mul_op).result(0)?.into();
+        let new_size_val = one_op_val(&for_block, mul_op)?;
         for_block.append_operation(scf::r#yield(ctx.context, &[new_size_val], loc).into());
         let for_region = Region::new();
         for_region.append_block(for_block);
@@ -973,31 +971,22 @@ fn print<'c, 'a, 'u>(
             loc,
         );
 
-        let size_val: Value = block.append_operation(for_op.into()).result(0)?.into();
+        let size_val = one_op_val(block, for_op)?;
 
-        block
-            .append_operation(
-                tensor::from_elements(ctx.context, flat_shape_type, &[size_val], loc).into(),
-            )
-            .result(0)?
-            .into()
+        let tensor_op = tensor::from_elements(ctx.context, flat_shape_type, &[size_val], loc);
+        one_op_val(block, tensor_op)?
     } else {
-        block
-            .append_operation(
-                arith::constant(
-                    ctx.context,
-                    flat_shape_type,
-                    DenseElementsAttribute::new(
-                        flat_shape_type,
-                        &[IntegerAttribute::new(ctx.index_type, len as i64).into()],
-                    )?
-                    .into(),
-                    loc,
-                )
-                .into(),
-            )
-            .result(0)?
-            .into()
+        let const_op = arith::constant(
+            ctx.context,
+            flat_shape_type,
+            DenseElementsAttribute::new(
+                flat_shape_type,
+                &[IntegerAttribute::new(ctx.index_type, len as i64).into()],
+            )?
+            .into(),
+            loc,
+        );
+        one_op_val(block, const_op)?
     };
 
     let deshape_op = tensor::reshape(
@@ -1008,10 +997,10 @@ fn print<'c, 'a, 'u>(
         loc,
     );
 
-    let deshaped_val: Value = block.append_operation(deshape_op.into()).result(0)?.into();
+    let deshaped_val = one_op_val(block, deshape_op)?;
 
     let len_op = tensor::dim(ctx.context, ctx.index_type, deshaped_val, zero_val, loc);
-    let len_val: Value = block.append_operation(len_op.into()).result(0)?.into();
+    let len_val = one_op_val(block, len_op)?;
 
     let for_op = scf::r#for(
         ctx.context,
@@ -1024,7 +1013,7 @@ fn print<'c, 'a, 'u>(
             let for_block = Block::new(&[(ctx.index_type, loc)]);
             let idx_val: Value = for_block.argument(0)?.into();
             let get_op = tensor::extract(ctx.context, elem_type, deshaped_val, &[idx_val], loc);
-            let cur_val: Value = for_block.append_operation(get_op.into()).result(0)?.into();
+            let cur_val = one_op_val(&for_block, get_op)?;
 
             let mut print_op = llvm::call(
                 ctx.context,
