@@ -692,6 +692,9 @@ fn compile_node<'c, 'a, 'u>(
         }
 
         // -- Monadic Array Functions --
+        Op::Data(Data::Node(Node::Prim(Len, span))) => {
+            vec![impls::len(&comp_node, &deps, *span, block, fctx, ctx)?]
+        }
         Op::Data(Data::Node(Node::Prim(Range, span))) => {
             vec![impls::range(&comp_node, &deps, *span, block, fctx, ctx)?]
         }

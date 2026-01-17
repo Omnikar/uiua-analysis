@@ -1,5 +1,51 @@
 use super::*;
 
+pub fn len<'c, 'a, 'u>(
+    comp_node: &CompNode,
+    deps: &[(NodeIndex, usize)],
+    span: usize,
+    block: &'a Block<'c>,
+    fctx: &FuncCompileContext<'c, 'a, 'u, '_, '_, '_>,
+    ctx: CompileContext<'c, 'u>,
+) -> Result<Value<'c, 'a>> {
+    let loc = span_to_loc(span, ctx);
+
+    let (dep_infos, _dep_types, dep_vals) = get_deps(deps, fctx.compile_graph);
+    let (dep_info, dep_val) = (dep_infos[0], dep_vals[0]);
+
+    let out_elem_type = mk_elem_type(&comp_node.types[0], ctx);
+    let out_type: Type = RankedTensorType::new(&[], out_elem_type, None).into();
+
+    match (
+        dep_info
+            .shape
+            .len()
+            .map(|opt| opt.map(|ax| ax.only_const())),
+        1,
+    ) {
+        // Known first axis length or known scalar
+        (Some(Some(Some(len))), _) | (Some(None), len) => {
+            let scalar_val = const_int(len as i64, out_elem_type, block, ctx, loc)?;
+            let tensor_op = tensor::from_elements(ctx.context, out_type, &[scalar_val], loc);
+            let tensor_val: Value = block.append_operation(tensor_op.into()).result(0)?.into();
+            Ok(tensor_val)
+        }
+        // Known rank ≥1 with unknown first axis length
+        (Some(Some(None)), _) => {
+            let zero_val = const_int(0, ctx.index_type, block, ctx, loc)?;
+            let dim_op = tensor::dim(ctx.context, ctx.index_type, dep_val, zero_val, loc);
+            let dim_val: Value = block.append_operation(dim_op.into()).result(0)?.into();
+            let cast_op = index::castu(dim_val, out_elem_type, loc);
+            let cast_val: Value = block.append_operation(cast_op).result(0)?.into();
+            let tensor_op = tensor::from_elements(ctx.context, out_type, &[cast_val], loc);
+            let tensor_val: Value = block.append_operation(tensor_op.into()).result(0)?.into();
+            Ok(tensor_val)
+        }
+        // Rank unknown
+        (None, _) => todo!("Length of unranked tensor"),
+    }
+}
+
 pub fn range<'c, 'a, 'u>(
     comp_node: &CompNode,
     deps: &[(NodeIndex, usize)],
