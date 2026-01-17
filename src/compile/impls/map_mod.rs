@@ -136,7 +136,8 @@ pub fn rows<'c, 'a, 'u>(
             );
             let cmp_val = one_op_val(block, cmp_op)?;
 
-            let assert_op = cf::assert(ctx.context, cmp_val, "Array lengths are incompatible", loc);
+            let err_msg = format!("{loc}: Array lengths are incompatible");
+            let assert_op = cf::assert(ctx.context, cmp_val, &err_msg, loc);
             block.append_operation(assert_op);
         }
 

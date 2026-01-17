@@ -14,6 +14,7 @@ use anyhow::{bail, Context as _, Result};
 use itertools::Itertools;
 use melior::{
     dialect::{
+        arith::CmpiPredicate,
         cf, func, index,
         ods::{arith, scf, tensor, tosa},
     },
