@@ -91,6 +91,33 @@ impl CompType {
         }
     }
 
+    pub fn to_scalar_info(&self) -> ValInfo {
+        let (typ, range) = match self {
+            CompType::Int(s, i) => (
+                0,
+                RangeInfo::new(
+                    match (s, i) {
+                        (false, 0) => u8::MAX as u64,
+                        (true, 0) => i8::MAX as u64,
+                        (false, 1) => u16::MAX as u64,
+                        (true, 1) => i16::MAX as u64,
+                        (false, 2) => u32::MAX as u64,
+                        (true, 2) => i32::MAX as u64,
+                        (false, 3) => u64::MAX,
+                        (true, 3) => i64::MAX as u64,
+                        (_, 4..) => unreachable!(),
+                    },
+                    *s,
+                    false,
+                ),
+            ),
+            CompType::Float(_) => (0, RangeInfo::new(u64::MAX, true, true)),
+            CompType::Bool => (0, RangeInfo::new(1, false, false)),
+            CompType::Char => (1, RangeInfo::new(u32::MAX as u64, false, false)),
+        };
+        ValInfo::new(typ, ShapeInfo::Ranked(SmallVec::new()), range)
+    }
+
     pub fn bit_width(&self) -> u8 {
         match self {
             CompType::Int(_, i) => [8, 16, 32, 64][*i as usize],
@@ -146,7 +173,7 @@ impl<'u> Op<'u> {
 }
 
 impl Cast {
-    fn from_types(from: &CompType, to: &CompType) -> Option<Self> {
+    pub fn from_types(from: &CompType, to: &CompType) -> Option<Self> {
         use Cast::*;
         match (from, to) {
             (CompType::Int(false, l), CompType::Int(_, r)) if r > l => Some(UUp),

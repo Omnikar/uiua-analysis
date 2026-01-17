@@ -17,20 +17,22 @@ use melior::{
         r#type::{FunctionType, MemRefType, RankedTensorType},
         *,
     },
-    pass,
+    // pass,
     utility::register_all_dialects,
     Context,
 };
-use petgraph::{graph::NodeIndex, stable_graph::StableGraph};
+use petgraph::{data::DataMap, graph::NodeIndex, stable_graph::StableGraph};
+use smallvec::smallvec;
 use std::io::Write;
-use uiua::{Node, Purity, SysOp};
+use uiua::{Node, SysOp};
 
 use crate::{
     analyze::{
-        analyze_func_graph, axis::Axis, AnalyzedFunc, FuncInfos, FuncLib, ShapeInfo, ValInfo,
+        analyze_func_graph, axis::Axis, AnalyzedFunc, FuncInfos, FuncLib, NodeInfo, ShapeInfo,
+        ValInfo,
     },
     graph::{Data, DataGraph, Stack, StackSlice},
-    pre_compile::{prepare_graph, CompNode, CompType, Impl, Op},
+    pre_compile::{prepare_graph, Cast, CompNode, CompType, Impl, Op},
 };
 
 /// The integer used to indicate a dynamic axis length to MLIR
@@ -86,6 +88,33 @@ pub fn compile_test(uiua: &uiua::Uiua) -> Result<()> {
     for i in 0..funclib.funcs.len() {
         let func = compile_func(&funclib, i, ctx)?;
         module.body().append_operation(func);
+    }
+
+    // Compile `FFI!` functions
+    for binding in &uiua.asm.bindings {
+        let uiua::BindingKind::Func(func) = &binding.kind else {
+            continue;
+        };
+        let Some(comment) = &binding.meta.comment else {
+            continue;
+        };
+        let node = &uiua.asm[func];
+        for line in comment.text.lines() {
+            if let Some(sig_str) = line.strip_prefix("FFI! ") {
+                let (func_name, out_type, in_types) = parse_ffi_sig(sig_str)?;
+
+                let func = compile_ffi_func(
+                    &mut funclib,
+                    node,
+                    func_name,
+                    out_type.as_ref(),
+                    in_types.as_ref(),
+                    node.span().unwrap_or(usize::MAX),
+                    ctx,
+                )?;
+                module.body().append_operation(func);
+            }
+        }
     }
 
     assert!(module.as_operation().verify());
@@ -171,7 +200,7 @@ fn compile_func<'c>(
 
     // TODO: Figure out what attributes to put to indicate purity
 
-    let mut func = func::func(
+    let func = func::func(
         ctx.context,
         StringAttribute::new(ctx.context, &func_name),
         TypeAttribute::new(FunctionType::new(ctx.context, &sig_in, &sig_out).into()),
@@ -181,6 +210,170 @@ fn compile_func<'c>(
     );
 
     Ok(func)
+}
+
+fn compile_ffi_func<'c, 'u>(
+    funclib: &mut FuncLib<'u>,
+    node: &'u Node,
+    func_name: &str,
+    out_comp_type: Option<&CompType>,
+    in_types: &[CompType],
+    span: usize,
+    ctx: CompileContext<'c, 'u>,
+) -> Result<Operation<'c>> {
+    let data_graph = DataGraph::from_node(node, &ctx.uiua.asm)?;
+
+    let arg_infos = in_types.iter().map(CompType::to_scalar_info).collect_vec();
+
+    let func_infos = analyze_func_graph(&data_graph, &arg_infos, funclib, ctx.uiua)?;
+
+    let loc = span_to_loc(span, ctx);
+
+    let mut pre_compile_graph = prepare_graph(&data_graph, &func_infos.map, ctx.uiua);
+
+    let mut sig_in = Vec::new();
+    let mut arg_types = Vec::new();
+    for in_comp_type in in_types {
+        let arg_type = mk_elem_type(in_comp_type, ctx);
+        sig_in.push(arg_type);
+        arg_types.push((arg_type, loc));
+    }
+
+    let mut sig_out = Vec::new();
+
+    if let Some(out_comp_type) = out_comp_type {
+        let (out_idx, out_i) = pre_compile_graph
+            .stack
+            .pop()
+            .context("Non-void FFI function missing output")?;
+        let out_node = pre_compile_graph.graph.node_weight(out_idx).unwrap();
+
+        if !out_node.info.vals[out_i]
+            .shape
+            .known_shape()
+            .as_ref()
+            .map(Vec::is_empty)
+            .unwrap_or(false)
+        {
+            bail!("Expected scalar output from FFI function");
+        }
+
+        if let Some(cast) = Cast::from_types(&out_node.types[out_i], out_comp_type) {
+            let cast_op = Op::Impl(Impl::Cast(cast), span);
+            let node_info = NodeInfo {
+                vals: smallvec![out_node.info.vals[out_i].clone()],
+                subfunc_idxs: vec![],
+            };
+            let comp_node = CompNode {
+                op: cast_op,
+                info: node_info,
+                types: smallvec![out_comp_type.clone()],
+            };
+            let cast_idx = pre_compile_graph.graph.add_node(comp_node);
+            pre_compile_graph
+                .graph
+                .add_edge(cast_idx, out_idx, (out_i, 0));
+            pre_compile_graph.stack.push((cast_idx, 0));
+        }
+
+        let out_type = mk_elem_type(out_comp_type, ctx);
+        sig_out.push(out_type);
+    }
+
+    let block = Block::new(&arg_types);
+
+    let mut in_tensors = Vec::<Value>::new();
+
+    for (arg_i, &in_type) in sig_in.iter().enumerate() {
+        let tensor_type: Type = RankedTensorType::new(&[], in_type, None).into();
+        let tensor_op = tensor::from_elements(
+            ctx.context,
+            tensor_type,
+            &[block.argument(arg_i)?.into()],
+            loc,
+        );
+        let tensor_val: Value = block.append_operation(tensor_op.into()).result(0)?.into();
+        in_tensors.push(tensor_val);
+    }
+
+    let mut compile_graph = new_compile_graph(pre_compile_graph.graph, &in_tensors);
+
+    let idxs = compile_graph.node_indices().collect_vec();
+
+    let mut fctx = FuncCompileContext {
+        compile_graph: &mut compile_graph,
+        func_infos: &func_infos,
+        funclib,
+    };
+
+    for idx in idxs {
+        compile_node(idx, &block, &mut fctx, ctx)?;
+    }
+
+    let mut outs = vals_from_cg(&pre_compile_graph.stack, &compile_graph)?;
+    if outs.len() > 1 {
+        bail!("FFI function cannot have more than one output");
+    }
+
+    if let Some(out_type) = out_comp_type {
+        let out_elem_type = mk_elem_type(out_type, ctx);
+
+        let out_val = outs.pop().context("Non-void FFI function missing output")?;
+
+        let extract_op = tensor::extract(ctx.context, out_elem_type, out_val, &[], loc);
+        let extracted_val: Value = block.append_operation(extract_op.into()).result(0)?.into();
+
+        block.append_operation(func::r#return(&[extracted_val], loc));
+    }
+
+    let region = Region::new();
+    region.append_block(block);
+
+    let func = func::func(
+        ctx.context,
+        StringAttribute::new(ctx.context, func_name),
+        TypeAttribute::new(FunctionType::new(ctx.context, &sig_in, &sig_out).into()),
+        region,
+        &[],
+        loc,
+    );
+
+    Ok(func)
+}
+
+fn parse_ffi_sig(sig_str: &str) -> Result<(&str, Option<CompType>, Vec<CompType>)> {
+    fn word_to_type(word: &str) -> Result<Option<CompType>> {
+        use CompType::*;
+        Ok(match word {
+            "char" => Some(Int(true, 0)),
+            "uchar" => Some(Int(false, 0)),
+            "short" => Some(Int(true, 1)),
+            "ushort" => Some(Int(false, 1)),
+            "int" => Some(Int(true, 2)),
+            "uint" => Some(Int(false, 2)),
+            "long" => Some(Int(true, 3)),
+            "ulong" => Some(Int(false, 3)),
+            "float" => Some(Float(false)),
+            "double" => Some(Float(true)),
+            "bool" => Some(Bool),
+            "void" => None,
+            _ => bail!("Invalid FFI type: {word}"),
+        })
+    }
+    let mut words = sig_str.split_whitespace();
+    let out_type = word_to_type(
+        words
+            .next()
+            .context("Missing return type in FFI signature")?,
+    )?;
+    let func_name = words
+        .next()
+        .context("Missing function name in FFI signature")?;
+    let in_types = words
+        .map(word_to_type)
+        .flat_map(Result::transpose)
+        .collect::<Result<_>>()?;
+    Ok((func_name, out_type, in_types))
 }
 
 fn new_compile_graph<'c, 'a, 'u>(
@@ -418,7 +611,7 @@ fn dims_from_shape_info(info: &ShapeInfo) -> Vec<u64> {
             .iter()
             .map(|ax| ax.only_const().map(|len| len as u64).unwrap_or(DYN_AX))
             .collect_vec(),
-        ShapeInfo::Unranked { prefix, suffix } => todo!(),
+        ShapeInfo::Unranked { .. } => todo!(),
     }
 }
 
