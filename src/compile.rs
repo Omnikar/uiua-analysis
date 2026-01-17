@@ -13,7 +13,7 @@ use melior::{
             DenseElementsAttribute, DenseI32ArrayAttribute, FlatSymbolRefAttribute,
             IntegerAttribute, StringAttribute, TypeAttribute,
         },
-        operation::{OperationLike, OperationMutLike},
+        operation::{OperationBuilder, OperationLike, OperationMutLike},
         r#type::{FunctionType, MemRefType, RankedTensorType},
         *,
     },
@@ -23,8 +23,8 @@ use melior::{
 };
 use petgraph::{data::DataMap, graph::NodeIndex, stable_graph::StableGraph};
 use smallvec::smallvec;
-use std::io::Write;
-use uiua::{Node, SysOp};
+use std::{collections::HashMap, io::Write};
+use uiua::{FunctionId, Node, SysOp};
 
 use crate::{
     analyze::{
@@ -85,12 +85,9 @@ pub fn compile_test(uiua: &uiua::Uiua) -> Result<()> {
         .funcs
         .push(AnalyzedFunc::new(func_id, data_graph, infos, span));
 
-    for i in 0..funclib.funcs.len() {
-        let func = compile_func(&funclib, i, ctx)?;
-        module.body().append_operation(func);
-    }
+    let mut extern_funcs =
+        HashMap::<FunctionId, ((&str, Option<CompType>, Vec<CompType>), usize)>::new();
 
-    // Compile `FFI export!` functions
     for binding in &uiua.asm.bindings {
         let uiua::BindingKind::Func(func) = &binding.kind else {
             continue;
@@ -99,11 +96,13 @@ pub fn compile_test(uiua: &uiua::Uiua) -> Result<()> {
             continue;
         };
         let node = &uiua.asm[func];
+
         for line in comment.text.lines() {
+            // Compile `FFI export!` functions
             if let Some(sig_str) = line.strip_prefix("FFI export! ") {
                 let (func_name, out_type, in_types) = parse_ffi_sig(sig_str)?;
 
-                let func = compile_ffi_func(
+                let func = compile_ffi_export_func(
                     &mut funclib,
                     node,
                     func_name,
@@ -114,6 +113,38 @@ pub fn compile_test(uiua: &uiua::Uiua) -> Result<()> {
                 )?;
                 module.body().append_operation(func);
             }
+
+            if let Some(sig_str) = line.strip_prefix("FFI import! ") {
+                let ffi_info = parse_ffi_sig(sig_str)?;
+                extern_funcs.insert(
+                    func.id.clone(),
+                    (ffi_info, node.span().unwrap_or(usize::MAX)),
+                );
+            }
+        }
+    }
+
+    for i in 0..funclib.funcs.len() {
+        if let Some(((func_name, out_type, in_types), span)) =
+            extern_funcs.get(&funclib.funcs[i].id)
+        {
+            // Compile `FFI import!` functions
+            let func = compile_ffi_import_func(
+                &funclib,
+                i,
+                func_name,
+                out_type.as_ref(),
+                in_types,
+                *span,
+                &module,
+                ctx,
+            )?;
+
+            module.body().append_operation(func);
+        } else {
+            // Compile normal functions
+            let func = compile_func(&funclib, i, ctx)?;
+            module.body().append_operation(func);
         }
     }
 
@@ -212,7 +243,7 @@ fn compile_func<'c>(
     Ok(func)
 }
 
-fn compile_ffi_func<'c, 'u>(
+fn compile_ffi_export_func<'c, 'u>(
     funclib: &mut FuncLib<'u>,
     node: &'u Node,
     func_name: &str,
@@ -337,6 +368,126 @@ fn compile_ffi_func<'c, 'u>(
         ctx.context,
         StringAttribute::new(ctx.context, func_name),
         TypeAttribute::new(FunctionType::new(ctx.context, &sig_in, &sig_out).into()),
+        region,
+        &[],
+        loc,
+    );
+
+    Ok(func)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compile_ffi_import_func<'c, 'u>(
+    funclib: &FuncLib<'u>,
+    idx: usize,
+    func_name: &str,
+    out_comp_type: Option<&CompType>,
+    in_types: &[CompType],
+    span: usize,
+    module: &Module<'c>,
+    ctx: CompileContext<'c, 'u>,
+) -> Result<Operation<'c>> {
+    let func = &funclib.funcs[idx];
+
+    let loc = span_to_loc(span, ctx);
+
+    let mut inner_sig_in = Vec::new();
+    let mut arg_types = Vec::new();
+    let mut outer_sig_in = Vec::new();
+    for (in_comp_type, in_val_info) in in_types.iter().zip(&func.infos.args) {
+        let inner_arg_type = mk_elem_type(in_comp_type, ctx);
+        inner_sig_in.push(inner_arg_type);
+
+        let outer_arg_type = mk_type(in_val_info, ctx);
+        outer_sig_in.push(outer_arg_type);
+
+        arg_types.push((outer_arg_type, loc));
+    }
+
+    let mut inner_sig_out = Vec::new();
+    let mut outer_sig_out = Vec::new();
+    if let Some(out_comp_type) = out_comp_type {
+        let out_type = mk_elem_type(out_comp_type, ctx);
+        inner_sig_out.push(out_type);
+
+        let tensor_type: Type = RankedTensorType::new(&[], out_type, None).into();
+        outer_sig_out.push(tensor_type);
+    }
+
+    let block = Block::new(&arg_types);
+
+    let mut in_vals = Vec::<Value>::new();
+
+    for (arg_i, in_comp_type) in in_types.iter().enumerate() {
+        let arg_val: Value = block.argument(arg_i)?.into();
+        let in_type = mk_elem_type(in_comp_type, ctx);
+
+        let elem_type = RankedTensorType::try_from(outer_sig_in[arg_i])
+            .unwrap()
+            .element();
+
+        let extract_op = tensor::extract(ctx.context, elem_type, arg_val, &[], loc);
+        let mut scalar_val: Value = block.append_operation(extract_op.into()).result(0)?.into();
+
+        let elem_comp_type = CompType::from_info(&func.infos.args[arg_i]);
+
+        if let Some(cast) = Cast::from_types(&elem_comp_type, in_comp_type) {
+            let op = OperationBuilder::new(cast.into(), loc)
+                .add_results(&[in_type])
+                .add_operands(&[scalar_val])
+                .build()?;
+
+            scalar_val = block.append_operation(op).result(0)?.into();
+        }
+
+        in_vals.push(scalar_val);
+    }
+
+    let ffi_func = func::func(
+        ctx.context,
+        StringAttribute::new(ctx.context, func_name),
+        TypeAttribute::new(FunctionType::new(ctx.context, &inner_sig_in, &inner_sig_out).into()),
+        Region::new(),
+        &[(
+            Identifier::new(ctx.context, "sym_visibility"),
+            StringAttribute::new(ctx.context, "private").into(),
+        )],
+        loc,
+    );
+    module.body().append_operation(ffi_func);
+
+    let call_op = func::call(
+        ctx.context,
+        FlatSymbolRefAttribute::new(ctx.context, func_name),
+        &in_vals,
+        &inner_sig_out,
+        loc,
+    );
+    let call_ref = block.append_operation(call_op);
+    let func_out_val: Option<Value> = if out_comp_type.is_some() {
+        Some(call_ref.result(0)?.into())
+    } else {
+        None
+    };
+
+    let mut return_vals = Vec::<Value>::new();
+
+    if let Some(func_out_val) = func_out_val {
+        let tensor_type: Type = outer_sig_out[0];
+        let tensor_op = tensor::from_elements(ctx.context, tensor_type, &[func_out_val], loc);
+        let tensor_val: Value = block.append_operation(tensor_op.into()).result(0)?.into();
+        return_vals.push(tensor_val);
+    }
+
+    block.append_operation(func::r#return(dbg!(&return_vals), loc));
+
+    let region = Region::new();
+    region.append_block(block);
+
+    let func = func::func(
+        ctx.context,
+        StringAttribute::new(ctx.context, &name_mangle(func)?),
+        TypeAttribute::new(FunctionType::new(ctx.context, &outer_sig_in, &outer_sig_out).into()),
         region,
         &[],
         loc,
@@ -548,7 +699,7 @@ fn compile_node<'c, 'a, 'u>(
             show(&deps, span, block, fctx, ctx)?;
             Vec::new()
         }
-        _ => todo!(),
+        op => todo!("{op:?}"),
     };
 
     fctx.compile_graph.node_weight_mut(idx).unwrap().1 = Some(value);
