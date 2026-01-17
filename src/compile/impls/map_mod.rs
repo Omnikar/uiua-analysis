@@ -307,6 +307,9 @@ pub fn rows<'c, 'a, 'u>(
             })
             .collect_vec();
 
+            // If this argument is fixed, index at 0 instead of the current row index
+            let idx_val = if deps_fixed[arg_i] { zero_val } else { idx_val };
+
             let get_op = OperationBuilder::new("tensor.extract_slice", loc)
                 .add_results(&[row_type])
                 .add_operands(&[dep_val, idx_val])
