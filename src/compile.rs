@@ -1,12 +1,12 @@
 mod impls;
 
-use anyhow::{bail, Context as _, Result};
+use anyhow::{Context as _, Result, bail};
 use itertools::Itertools;
 use melior::{
+    Context,
     dialect::{
-        func, index,
+        DialectRegistry, func, index,
         ods::{arith, bufferization, llvm, memref, scf, tensor},
-        DialectRegistry,
     },
     ir::{
         attribute::{
@@ -19,7 +19,6 @@ use melior::{
     },
     // pass,
     utility::register_all_dialects,
-    Context,
 };
 use petgraph::{data::DataMap, graph::NodeIndex, stable_graph::StableGraph};
 use smallvec::smallvec;
@@ -31,11 +30,11 @@ use uiua::{FunctionId, Node, SysOp};
 
 use crate::{
     analyze::{
-        analyze_func_graph, axis::Axis, AnalyzedFunc, FuncInfos, FuncLib, NodeInfo, ShapeInfo,
-        ValInfo,
+        AnalyzedFunc, FuncInfos, FuncLib, NodeInfo, ShapeInfo, ValInfo, analyze_func_graph,
+        axis::Axis,
     },
     graph::{Data, DataGraph, Stack, StackSlice},
-    pre_compile::{prepare_graph, Cast, CompNode, CompType, Impl, Op},
+    pre_compile::{Cast, CompNode, CompType, Impl, Op, prepare_graph},
 };
 
 /// The integer used to indicate a dynamic axis length to MLIR
@@ -157,7 +156,9 @@ pub fn compile_test(uiua: &uiua::Uiua) -> Result<()> {
 
     assert!(module.as_operation().verify());
 
-    let mut f = std::fs::File::create("build/test.mlir")?;
+    let out_path = std::env::args().nth(2);
+    let mut f = std::fs::File::create(out_path.as_deref().unwrap_or("build/test.mlir"))?;
+
     write!(f, "{}", module.as_operation())?;
 
     Ok(())
