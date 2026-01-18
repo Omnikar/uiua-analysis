@@ -484,3 +484,36 @@ pub fn fix<'c, 'a, 'u>(
 
     Ok(one_op_val(block, reshape_op)?)
 }
+
+pub fn general_transpose<'c, 'a, 'u>(
+    perm_func: impl FnOnce(&mut [i32]),
+    comp_node: &CompNode,
+    deps: &[(NodeIndex, usize)],
+    span: usize,
+    block: &'a Block<'c>,
+    fctx: &FuncCompileContext<'c, 'a, 'u, '_, '_, '_>,
+    ctx: CompileContext<'c, 'u>,
+) -> Result<Value<'c, 'a>> {
+    let loc = span_to_loc(span, ctx);
+
+    let (dep_infos, _dep_types, dep_vals) = get_deps(deps, fctx.compile_graph);
+    let (dep_info, dep_val) = (dep_infos[0], dep_vals[0]);
+
+    let out_type = mk_type_from_comp_shape(&comp_node.types[0], &comp_node.info.vals[0].shape, ctx);
+
+    let rank = match dep_info.shape.rank() {
+        Some(rank @ 1..) => rank,
+        Some(0) => return Ok(dep_val),
+        None => todo!("Transpose unranked tensor"),
+    };
+
+    let mut perm = (0..rank as i32).collect_vec();
+    perm_func(&mut perm);
+    // perm.rotate_left(1);
+
+    let perm_attr = DenseI32ArrayAttribute::new(ctx.context, &perm);
+
+    let transpose_op = tosa::transpose(ctx.context, out_type, dep_val, perm_attr, loc);
+
+    Ok(one_op_val(block, transpose_op)?)
+}

@@ -769,7 +769,17 @@ pub fn transpose_n(n: i32, ctx: AnalyzeCtx) -> Result<NodeInfo> {
     let dep_info = one_arg(ctx.dep_infos)?;
 
     let shape = match dep_info.shape {
-        Known(val) => todo!(),
+        Known(val) => {
+            // TODO: change to known value once it's public
+            let mut shape: SymShape = val.shape.iter().map(Axis::from).collect();
+            let rot = n.unsigned_abs() as usize;
+            if n > 0 {
+                shape.rotate_left(rot);
+            } else if n < 0 {
+                shape.rotate_right(rot);
+            }
+            Ranked(shape)
+        }
         Ranked(mut shape) => {
             let rot = n.unsigned_abs() as usize;
             if n > 0 {

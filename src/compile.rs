@@ -599,7 +599,7 @@ fn compile_node<'c, 'a, 'u>(
         .0
         .clone();
 
-    use uiua::Primitive::*;
+    use uiua::{ImplPrimitive::*, Primitive::*};
     let value = match comp_node.op {
         Op::Data(Data::Arg(i)) => vec![block.argument(i)?.into()],
         Op::Data(Data::Node(Node::Push(value))) => vec![impls::constant(value, block, ctx)?],
@@ -708,6 +708,35 @@ fn compile_node<'c, 'a, 'u>(
         }
         Op::Data(Data::Node(Node::Prim(Fix, span))) => {
             vec![impls::fix(&comp_node, &deps, *span, block, fctx, ctx)?]
+        }
+        Op::Data(Data::Node(Node::Prim(Transpose, span))) => {
+            vec![impls::general_transpose(
+                |sh| sh.rotate_left(1),
+                &comp_node,
+                &deps,
+                *span,
+                block,
+                fctx,
+                ctx,
+            )?]
+        }
+        Op::Data(Data::Node(Node::ImplPrim(TransposeN(n), span))) => {
+            vec![impls::general_transpose(
+                |sh| {
+                    let rot = n.unsigned_abs() as usize;
+                    if *n > 0 {
+                        sh.rotate_left(rot);
+                    } else {
+                        sh.rotate_right(rot);
+                    }
+                },
+                &comp_node,
+                &deps,
+                *span,
+                block,
+                fctx,
+                ctx,
+            )?]
         }
 
         // -- Mapping Modifiers --
