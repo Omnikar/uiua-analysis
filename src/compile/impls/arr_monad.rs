@@ -441,3 +441,46 @@ pub fn reverse<'c, 'a, 'u>(
     );
     Ok(one_op_val(block, reverse_op)?)
 }
+
+pub fn fix<'c, 'a, 'u>(
+    comp_node: &CompNode,
+    deps: &[(NodeIndex, usize)],
+    span: usize,
+    block: &'a Block<'c>,
+    fctx: &FuncCompileContext<'c, 'a, 'u, '_, '_, '_>,
+    ctx: CompileContext<'c, 'u>,
+) -> Result<Value<'c, 'a>> {
+    let loc = span_to_loc(span, ctx);
+
+    let (dep_infos, _dep_types, dep_vals) = get_deps(deps, fctx.compile_graph);
+    let (dep_info, dep_val) = (dep_infos[0], dep_vals[0]);
+
+    let out_type = mk_type_from_comp_shape(&comp_node.types[0], &comp_node.info.vals[0].shape, ctx);
+
+    let mut shape_vals = vec![const_int(1, ctx.index_type, block, ctx, loc)?];
+
+    let shape = dep_info
+        .shape
+        .known_shape()
+        .context("Cannot fix unranked value")?;
+    let rank = shape.len();
+
+    for (i, ax) in shape.into_iter().enumerate() {
+        if let Some(len) = ax {
+            shape_vals.push(const_int(len as i64, ctx.index_type, block, ctx, loc)?);
+        } else {
+            let dim_i_val = const_int(i as i64, ctx.index_type, block, ctx, loc)?;
+            let dim_op = tensor::dim(ctx.context, ctx.index_type, dep_val, dim_i_val, loc);
+            let len_val = one_op_val(block, dim_op)?;
+            shape_vals.push(len_val);
+        }
+    }
+
+    let shape_type: Type = RankedTensorType::new(&[rank as u64 + 1], ctx.index_type, None).into();
+    let shape_op = tensor::from_elements(ctx.context, shape_type, &shape_vals, loc);
+    let shape_val = one_op_val(block, shape_op)?;
+
+    let reshape_op = tensor::reshape(ctx.context, out_type, dep_val, shape_val, loc);
+
+    Ok(one_op_val(block, reshape_op)?)
+}

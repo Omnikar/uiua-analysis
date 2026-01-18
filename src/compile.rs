@@ -706,6 +706,9 @@ fn compile_node<'c, 'a, 'u>(
         Op::Data(Data::Node(Node::Prim(Reverse, span))) => {
             vec![impls::reverse(&comp_node, &deps, *span, block, fctx, ctx)?]
         }
+        Op::Data(Data::Node(Node::Prim(Fix, span))) => {
+            vec![impls::fix(&comp_node, &deps, *span, block, fctx, ctx)?]
+        }
 
         // -- Mapping Modifiers --
         Op::Data(Data::Node(Node::Mod(Rows, _funcs, span))) => {
