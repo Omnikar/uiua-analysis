@@ -17,7 +17,7 @@ pub struct DataGraph<'u> {
 }
 
 /// A single unit of a data graph
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Data<'u> {
     /// A Uiua execution Node
     Node(&'u Node),

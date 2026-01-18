@@ -1243,7 +1243,7 @@ pub fn reduce<'u>(funcs: &'u [SigNode], ctx: AnalyzeCtx<'_, '_, '_, '_, 'u>) -> 
         return Ok(NodeInfo::one_val(row_info));
     }
 
-    let mut data_graph = DataGraph::from_node(func, &ctx.uiua.asm)?;
+    let data_graph = DataGraph::from_node(func, &ctx.uiua.asm)?;
     let infos = analyze_subgraph(
         &data_graph,
         &[row_info.clone(), row_info.clone()],
@@ -1261,7 +1261,7 @@ pub fn reduce<'u>(funcs: &'u [SigNode], ctx: AnalyzeCtx<'_, '_, '_, '_, 'u>) -> 
         );
     }
 
-    let (idx, out_i) = data_graph.stack.pop().unwrap();
+    let (idx, out_i) = *data_graph.stack.first().unwrap();
     let out_info = &infos.get(&idx).unwrap().vals[out_i];
 
     if row_info.typ != out_info.typ {

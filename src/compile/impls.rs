@@ -2,12 +2,14 @@ mod arr_monad;
 mod perv_dyad;
 mod perv_monad;
 
+mod iter_mod;
 mod map_mod;
 
 pub use arr_monad::*;
 pub use perv_dyad::*;
 pub use perv_monad::*;
 
+pub use iter_mod::*;
 pub use map_mod::*;
 
 use anyhow::{bail, Context as _, Result};

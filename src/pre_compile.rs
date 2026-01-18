@@ -51,6 +51,8 @@ pub enum Impl {
     /// Treated analogously to uiua::SysOp::Show
     /// Auto inserted for any values left on the stack at the end of a program
     EndShow,
+    Sum,
+    Product,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -147,20 +149,6 @@ impl std::fmt::Debug for CompType {
         std::fmt::Display::fmt(self, f)
     }
 }
-// impl From<CompType> for RangeInfo {
-//     fn from(comp_type: CompType) -> Self {
-//         match comp_type {
-//             CompType::Int(s, i) => RangeInfo {
-//                 extent: 2u64.pow(i + 3),
-//                 signed: todo!(),
-//                 float: todo!(),
-//             },
-//             CompType::Float(d) => todo!(),
-//             CompType::Bool => todo!(),
-//             CompType::Char => todo!(),
-//         }
-//     }
-// }
 
 impl<'u> Op<'u> {
     pub fn span(&self) -> Option<usize> {
@@ -215,6 +203,7 @@ impl From<Cast> for &'static str {
 pub fn prepare_graph<'u>(
     data_graph: &DataGraph<'u>,
     info_map: &HashMap<NodeIndex, NodeInfo>,
+    func_infos: &FuncInfos<'u>,
     uiua: &uiua::Uiua,
 ) -> PreCompileGraph<'u> {
     let mut annotated_graph: AnnotatedGraph<'u> =
@@ -237,6 +226,9 @@ pub fn prepare_graph<'u>(
             prepare_node(idx, &mut pre_compile_graph, &mut annotated_graph, info_map)[out_i];
         pre_compile_graph.stack.push(new_item);
     }
+
+    // Optimizations
+    reduce_sum_and_product(&mut pre_compile_graph, func_infos, uiua);
 
     pre_compile_graph
 }
@@ -396,4 +388,57 @@ fn int_type_idx(extent: u64, signed: bool) -> u8 {
     let x = extent;
     let s = signed as u32;
     (x.max(2).ilog2() + s).ilog2().saturating_sub(2).min(3) as u8
+}
+
+// -- separate file? --
+
+fn reduce_sum_and_product<'u>(
+    pre_compile_graph: &mut PreCompileGraph<'u>,
+    func_infos: &FuncInfos<'u>,
+    uiua: &uiua::Uiua,
+) {
+    for idx in pre_compile_graph.graph.node_indices().collect_vec() {
+        let comp_node = pre_compile_graph.graph.node_weight(idx).unwrap();
+
+        let Op::Data(Data::Node(Node::Mod(Primitive::Reduce, _, _span))) = comp_node.op else {
+            continue;
+        };
+
+        let sf_idx = comp_node.info.subfunc_idxs[0];
+        let (subfunc_graph, _subfunc_info_map) = &func_infos.subfuncs[sf_idx];
+
+        if !subfunc_graph.graph.node_weights().all(|node| match node {
+            Data::Node(node) => node.is_pure(&uiua.asm),
+            Data::Arg(_) => true,
+        }) || subfunc_graph.stack.len() != 1
+        {
+            continue;
+        }
+
+        let (out_idx, _out_i) = subfunc_graph.stack[0];
+        let deps = subfunc_graph
+            .graph
+            .neighbors(out_idx)
+            .map(|idx| *subfunc_graph.graph.node_weight(idx).unwrap())
+            .collect_vec();
+
+        if deps.len() != 2 || !deps.contains(&Data::Arg(0)) || !deps.contains(&Data::Arg(1)) {
+            continue;
+        }
+
+        let data = *subfunc_graph.graph.node_weight(out_idx).unwrap();
+        let (new_impl, span) = match data {
+            Data::Node(Node::Prim(Primitive::Add, span)) => (Impl::Sum, span),
+            Data::Node(Node::Prim(Primitive::Mul, span)) => (Impl::Product, span),
+            _ => continue,
+        };
+
+        let new_comp_node = CompNode {
+            op: Op::Impl(new_impl, *span),
+            info: comp_node.info.clone(),
+            types: comp_node.types.clone(),
+        };
+
+        *pre_compile_graph.graph.node_weight_mut(idx).unwrap() = new_comp_node;
+    }
 }

@@ -176,7 +176,7 @@ fn compile_func<'c>(
         .map(|span| span_to_loc(span, ctx))
         .unwrap_or_else(|| Location::unknown(ctx.context));
 
-    let mut pre_compile_graph = prepare_graph(&func.graph, &func.infos.map, ctx.uiua);
+    let mut pre_compile_graph = prepare_graph(&func.graph, &func.infos.map, &func.infos, ctx.uiua);
 
     // If this is the main function, then any leftover outputs get automatically connected to new pretty-print nodes in order to print them when the program ends
     if func_name == "main" {
@@ -267,7 +267,7 @@ fn compile_ffi_export_func<'c, 'u>(
 
     let loc = span_to_loc(span, ctx);
 
-    let mut pre_compile_graph = prepare_graph(&data_graph, &func_infos.map, ctx.uiua);
+    let mut pre_compile_graph = prepare_graph(&data_graph, &func_infos.map, &func_infos, ctx.uiua);
 
     let mut sig_in = Vec::new();
     let mut arg_types = Vec::new();
@@ -711,6 +711,14 @@ fn compile_node<'c, 'a, 'u>(
         Op::Data(Data::Node(Node::Mod(Rows, _funcs, span))) => {
             impls::rows(&comp_node, &deps, *span, block, fctx, ctx)?
         }
+
+        // -- Iterating Modifiers --
+        Op::Impl(Impl::Sum, span) => vec![impls::sum_product(
+            false, &comp_node, &deps, span, block, fctx, ctx,
+        )?],
+        Op::Impl(Impl::Product, span) => vec![impls::sum_product(
+            true, &comp_node, &deps, span, block, fctx, ctx,
+        )?],
 
         Op::Data(Data::Node(Node::Prim(Sys(SysOp::Print), span))) => {
             // print(&deps, *span, block, fctx, ctx)?;

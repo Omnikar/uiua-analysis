@@ -41,7 +41,7 @@ fn analyze_test(uiua: &uiua::Uiua) -> Result<()> {
     let infos =
         analyze::analyze_func_graph(&data_graph, arg_infos, &mut analyze::FuncLib::new(), uiua)?;
 
-    let prepared = pre_compile::prepare_graph(&data_graph, &infos.map, uiua);
+    let prepared = pre_compile::prepare_graph(&data_graph, &infos.map, &infos, uiua);
 
     let mut f = std::fs::File::create("build/compile-graph.dot").unwrap();
     let s = format!("{:?}", petgraph::dot::Dot::new(&prepared.graph));

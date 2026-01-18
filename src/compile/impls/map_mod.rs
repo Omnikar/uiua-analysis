@@ -150,7 +150,8 @@ pub fn rows<'c, 'a, 'u>(
 
     let (subfunc_graph, subfunc_info_map) =
         &fctx.func_infos.subfuncs[comp_node.info.subfunc_idxs[0]];
-    let pre_compile_graph = prepare_graph(subfunc_graph, subfunc_info_map, ctx.uiua);
+    let pre_compile_graph =
+        prepare_graph(subfunc_graph, subfunc_info_map, fctx.func_infos, ctx.uiua);
 
     let Some(out_len) = out_len else {
         // If out_len is None, all inputs are scalars and the function should be called directly
