@@ -240,9 +240,7 @@ impl<'u> DataGraph<'u> {
             .node_indices()
             .filter(|&idx| {
                 if let Some(Data::Node(node)) = self.graph.node_weight(idx) {
-                    // HACK: Mark all nodes as pure pending fix for external function purity
-                    true
-                    // !node.is_min_purity(uiua::Purity::Impure, asm)
+                    !node.is_min_purity(uiua::Purity::Impure, asm)
                 } else {
                     false
                 }
