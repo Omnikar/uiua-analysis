@@ -1315,3 +1315,141 @@ pub fn reduce<'u>(funcs: &'u [SigNode], ctx: AnalyzeCtx<'_, '_, '_, '_, 'u>) -> 
         bail!("Reduce is currently only supported for pervasive functions");
     }
 }
+
+pub fn do_loop<'u>(funcs: &'u [SigNode], ctx: AnalyzeCtx<'_, '_, '_, '_, 'u>) -> Result<NodeInfo> {
+    let body = &funcs[0].node;
+    let cond = &funcs[1].node;
+
+    let body_sig = body.sig().ok().context("Failed to infer body signature")?;
+    let cond_sig = cond
+        .sig()
+        .ok()
+        .context("Failed to infer condition signature")?;
+
+    // FIXME: Only works for net signatures of |n.n+1
+
+    // let mut cond_in = cond_sig.args();
+    // let mut cond_out = cond_sig.outputs();
+    // let mut body_in = body_sig.args();
+    // let mut body_out = body_sig.outputs();
+
+    // if cond_out < body_in + 1 {
+    //     let diff = body_in + 1 - cond_out;
+    //     cond_in += diff;
+    //     cond_out += diff;
+    // } else if body_in + 1 < cond_out {
+    //     let diff = cond_out - body_in - 1;
+    //     body_in += diff;
+    //     body_out += diff;
+    // }
+
+    // if cond_in != body_out {
+    //     bail!("Currently unsupported signature");
+    // }
+
+    if cond_sig.outputs() != cond_sig.args() + 1 || body_sig.outputs() != body_sig.args() {
+        bail!("Currently unsupported signature");
+    }
+
+    // let mut generic_nvars = 0;
+
+    let mut generic_input_infos = Vec::new();
+    // let mut generic_reqs = Vec::new();
+    // let mut generic_subfuncs = Vec::new();
+
+    for dep in &ctx.dep_infos {
+        let rank = dep
+            .shape
+            .rank()
+            .context("Cannot loop with unknown rank array")?;
+        let generic_shape = (0..rank)
+            // .map(|_| Axis::newvar(&mut generic_nvars))
+            .map(|_| Axis::newvar(ctx.nvars))
+            .collect();
+        let generic_info = ValInfo {
+            typ: dep.typ,
+            shape: Ranked(generic_shape),
+            range: dep.range,
+        };
+        generic_input_infos.push(generic_info);
+    }
+
+    let cond_data_graph = DataGraph::from_node(cond, &ctx.uiua.asm)?;
+    // let cond_infos = analyze_subgraph(
+    //     &cond_data_graph,
+    //     &generic_input_infos,
+    //     &mut generic_nvars,
+    //     &mut generic_reqs,
+    //     &mut generic_subfuncs,
+    //     ctx.funclib,
+    //     ctx.uiua,
+    // )?;
+
+    // let body_data_graph = DataGraph::from_node(body, &ctx.uiua.asm)?;
+
+    // let body_infos = analyze_subgraph(
+    //     &body_data_graph,
+    //     &…,
+    //     ctx.nvars,
+    //     ctx.reqs,
+    //     ctx.subfuncs,
+    //     ctx.funclib,
+    //     ctx.uiua,
+    // )?;
+
+    // FIXME: Actually do the idempotence calculations
+
+    let cond_infos = analyze_subgraph(
+        &cond_data_graph,
+        &generic_input_infos,
+        ctx.nvars,
+        ctx.reqs,
+        ctx.subfuncs,
+        ctx.funclib,
+        ctx.uiua,
+    )?;
+
+    let (cond_idx, cond_out_i) = cond_data_graph.stack[0];
+    let cond_info = &cond_infos.get(&cond_idx).unwrap().vals[cond_out_i];
+    if cond_info.typ != 0
+        || (cond_info.range != RangeInfo::bool() && cond_info.range != RangeInfo::zero())
+        || cond_info.shape.rank() != Some(0)
+    {
+        bail!("Expected condition to be a scalar boolean");
+    }
+
+    let mut body_input_infos = cond_data_graph
+        .stack
+        .iter()
+        .skip(1)
+        .map(|&(idx, out_i)| cond_infos.get(&idx).unwrap().vals[out_i].clone())
+        .collect_vec();
+
+    body_input_infos.extend_from_slice(&generic_input_infos[cond_sig.args()..]);
+
+    let body_data_graph = DataGraph::from_node(body, &ctx.uiua.asm)?;
+    let body_infos = analyze_subgraph(
+        &body_data_graph,
+        &body_input_infos,
+        ctx.nvars,
+        ctx.reqs,
+        ctx.subfuncs,
+        ctx.funclib,
+        ctx.uiua,
+    )?;
+
+    let subfuncs_len = ctx.subfuncs.len();
+
+    let node_info = body_data_graph
+        .stack
+        .iter()
+        .map(|&(idx, out_i)| body_infos.get(&idx).unwrap().vals[out_i].clone())
+        .collect::<NodeInfo>()
+        .func(subfuncs_len)
+        .func(subfuncs_len + 1);
+
+    ctx.subfuncs.push((body_data_graph, body_infos));
+    ctx.subfuncs.push((cond_data_graph, cond_infos));
+
+    Ok(node_info)
+}

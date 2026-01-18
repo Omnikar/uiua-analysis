@@ -12,7 +12,7 @@ name=test
 
 LLVM_DIR=$(llvm-config --libdir)
 
-mlir-opt "$name".mlir --pass-pipeline='builtin.module(symbol-dce,cse,func.func(tosa-to-linalg-named),tosa-to-arith,convert-elementwise-to-linalg,one-shot-bufferize{bufferize-function-boundaries},func.func(buffer-hoisting,buffer-loop-hoisting),drop-equivalent-buffer-results,func.func(promote-buffers-to-stack),buffer-deallocation-pipeline,convert-bufferization-to-memref,expand-strided-metadata,convert-linalg-to-affine-loops,lower-affine,finalize-memref-to-llvm,convert-scf-to-cf,convert-to-llvm,reconcile-unrealized-casts,canonicalize)' -o "$name"_opt.mlir
+mlir-opt "$name".mlir --pass-pipeline='builtin.module(symbol-dce,cse,func.func(tosa-to-linalg-named,tosa-to-linalg,tosa-to-arith,convert-elementwise-to-linalg),one-shot-bufferize{allow-return-allocs-from-loops bufferize-function-boundaries},func.func(buffer-hoisting,buffer-loop-hoisting),drop-equivalent-buffer-results,func.func(promote-buffers-to-stack),buffer-deallocation-pipeline,convert-bufferization-to-memref,expand-strided-metadata,convert-linalg-to-affine-loops,lower-affine,finalize-memref-to-llvm,convert-scf-to-cf,convert-to-llvm,reconcile-unrealized-casts,canonicalize)' -o "$name"_opt.mlir
 
 mlir-translate "$name"_opt.mlir \
   -mlir-to-llvmir \

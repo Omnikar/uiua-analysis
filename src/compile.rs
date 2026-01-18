@@ -751,6 +751,9 @@ fn compile_node<'c, 'a, 'u>(
         Op::Impl(Impl::Product, span) => vec![impls::sum_product(
             true, &comp_node, &deps, span, block, fctx, ctx,
         )?],
+        Op::Data(Data::Node(Node::Mod(Do, _funcs, span))) => {
+            impls::do_loop(&comp_node, &deps, *span, block, fctx, ctx)?
+        }
 
         Op::Data(Data::Node(Node::Prim(Sys(SysOp::Print), span))) => {
             // print(&deps, *span, block, fctx, ctx)?;

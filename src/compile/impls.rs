@@ -26,7 +26,7 @@ use melior::{
             FlatSymbolRefAttribute, FloatAttribute, IntegerAttribute,
         },
         operation::OperationBuilder,
-        r#type::RankedTensorType,
+        r#type::{IntegerType, RankedTensorType},
         *,
     },
 };

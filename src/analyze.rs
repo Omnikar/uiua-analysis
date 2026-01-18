@@ -462,7 +462,7 @@ impl std::ops::Mul for RangeInfo {
     type Output = Self;
     fn mul(self, rhs: Self) -> Self {
         let mut range = self.max(rhs);
-        range.expand(self.extent.saturating_mul(rhs.extent));
+        range.extent = self.extent.saturating_mul(rhs.extent);
         range
     }
 }
@@ -825,6 +825,7 @@ fn analyze_node_impl<'u>(
 
         // -- Iterating Modifiers --
         Data::Node(Node::Mod(Reduce, funcs, _span)) => impls::reduce(funcs, ctx)?,
+        Data::Node(Node::Mod(Do, funcs, _span)) => impls::do_loop(funcs, ctx)?,
 
         // -- Not yet categorized --
         Data::Node(Node::Prim(prim, _span))

@@ -162,8 +162,8 @@ pub fn rows<'c, 'a, 'u>(
             ..*fctx
         };
 
-        for root in subfunc_graph.roots(&ctx.uiua.asm) {
-            compile_node(root, block, &mut sub_fctx, ctx)?;
+        for idx in sub_fctx.compile_graph.node_indices().collect_vec() {
+            compile_node(idx, block, &mut sub_fctx, ctx)?;
         }
 
         return vals_from_cg(&pre_compile_graph.stack, &compile_graph);

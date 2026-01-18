@@ -30,6 +30,7 @@ impl<'u> DataGraph<'u> {
         let mut data_graph = Self::default();
         data_graph.process_node(node)?;
         data_graph.prune(asm);
+        data_graph.stack.reverse();
         Ok(data_graph)
     }
 
@@ -264,6 +265,14 @@ impl<'u> DataGraph<'u> {
         for idx in unreachable {
             self.graph.remove_node(idx);
         }
+    }
+
+    /// The number of `Arg` nodes present in the graph
+    pub fn arg_count(&self) -> usize {
+        self.graph
+            .node_weights()
+            .filter(|data| matches!(data, Data::Arg(_)))
+            .count()
     }
 }
 
