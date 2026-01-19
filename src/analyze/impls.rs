@@ -1,13 +1,13 @@
 //! Primitive-specific functions for propagating static analysis `Info`
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use itertools::Itertools;
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 use uiua::{SigNode, Value};
 
 use super::axis::{Axis, Condition, Relation};
 use super::{
-    analyze_subgraph, typ_name, FuncLib, InfoMap, NodeInfo, RangeInfo, ShapeInfo, SymShape, ValInfo,
+    FuncLib, InfoMap, NodeInfo, RangeInfo, ShapeInfo, SymShape, ValInfo, analyze_subgraph, typ_name,
 };
 use crate::graph::DataGraph;
 
@@ -502,7 +502,10 @@ pub fn range(ctx: AnalyzeCtx) -> Result<NodeInfo> {
                     }
                 }
             } else {
-                bail!("Range max should be a single integer or a list of integers, but its rank is {}", shape.len());
+                bail!(
+                    "Range max should be a single integer or a list of integers, but its rank is {}",
+                    shape.len()
+                );
             };
             (shape, RangeInfo::nat().signed(dep_info.range.signed))
         }

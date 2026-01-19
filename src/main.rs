@@ -8,7 +8,7 @@ mod pre_compile;
 
 use anyhow::Result;
 use itertools::Itertools;
-use petgraph::{graph::NodeIndex, Graph};
+use petgraph::{Graph, graph::NodeIndex};
 use std::collections::HashSet;
 use std::io::Write;
 

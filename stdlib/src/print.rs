@@ -1,4 +1,4 @@
-use crate::{extract_memref, ArrayRef, FfiUnrankedMemRef};
+use crate::{ArrayRef, FfiUnrankedMemRef, extract_memref};
 use concat_idents::concat_idents;
 
 fn show_num<T: std::fmt::Display>(arr: ArrayRef<T>) {

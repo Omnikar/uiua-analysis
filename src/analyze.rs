@@ -1,11 +1,11 @@
 pub mod axis;
 pub mod impls;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use itertools::Itertools;
 use petgraph::graph::NodeIndex;
 use petgraph::stable_graph::StableGraph;
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 use std::collections::HashMap;
 use uiua::{BindingKind, Node, Purity, RealArrayValue, Uiua, Value};
 

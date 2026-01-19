@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use petgraph::stable_graph::{NodeIndex, StableGraph};
 use smallvec::SmallVec;
 use std::collections::HashSet;

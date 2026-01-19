@@ -12,7 +12,7 @@ pub use perv_monad::*;
 pub use iter_mod::*;
 pub use map_mod::*;
 
-use anyhow::{bail, Context as _, Result};
+use anyhow::{Context as _, Result, bail};
 use itertools::Itertools;
 use melior::{
     dialect::{
@@ -33,14 +33,14 @@ use melior::{
 use petgraph::graph::NodeIndex;
 
 use super::{
-    compile_node, const_int, dims_from_shape_info, mk_elem_type, mk_tensor_type, mk_type,
-    mk_type_from_comp_shape, name_mangle, new_compile_graph, one_op_val, span_to_loc, vals_from_cg,
-    CompileContext, FuncCompileContext, FuncCompileGraph, DYN_AX,
+    CompileContext, DYN_AX, FuncCompileContext, FuncCompileGraph, compile_node, const_int,
+    dims_from_shape_info, mk_elem_type, mk_tensor_type, mk_type, mk_type_from_comp_shape,
+    name_mangle, new_compile_graph, one_op_val, span_to_loc, vals_from_cg,
 };
 use crate::{
     analyze::{ShapeInfo, ValInfo},
     graph::StackSlice,
-    pre_compile::{prepare_graph, Cast, CompNode, CompType},
+    pre_compile::{Cast, CompNode, CompType, prepare_graph},
 };
 
 pub fn constant<'c, 'a>(

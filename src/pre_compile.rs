@@ -2,12 +2,12 @@ use itertools::Itertools;
 // use anyhow::{bail, Context as _, Result};
 // use itertools::Itertools;
 use petgraph::{graph::NodeIndex, stable_graph::StableGraph};
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 use std::collections::HashMap;
 use uiua::{Node, Primitive};
 
 use crate::{
-    analyze::{axis::Axis, FuncInfos, FuncLib, InfoMap, NodeInfo, RangeInfo, ShapeInfo, ValInfo},
+    analyze::{FuncInfos, FuncLib, InfoMap, NodeInfo, RangeInfo, ShapeInfo, ValInfo, axis::Axis},
     graph::{Data, DataGraph, Stack},
 };
 
