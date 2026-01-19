@@ -1,7 +1,7 @@
 use itertools::Itertools;
 // use anyhow::{bail, Context as _, Result};
 // use itertools::Itertools;
-use petgraph::{graph::NodeIndex, stable_graph::StableGraph};
+use petgraph::{Direction, graph::NodeIndex, stable_graph::StableGraph, visit::EdgeRef};
 use smallvec::{SmallVec, smallvec};
 use std::collections::HashMap;
 use uiua::{Node, Primitive};
@@ -41,12 +41,14 @@ pub enum CompType {
 #[derive(Debug, Clone)]
 pub enum Op<'u> {
     Data(Data<'u>),
+    Prim(Primitive, usize),
     Impl(Impl, usize),
 }
 
 /// Custom operations
 #[derive(Debug, Clone)]
 pub enum Impl {
+    Noop,
     Cast(Cast),
     /// Treated analogously to uiua::SysOp::Show
     /// Auto inserted for any values left on the stack at the end of a program
@@ -235,14 +237,38 @@ pub fn prepare_graph<'u>(
         );
     }
 
-    for &(idx, out_i) in &data_graph.stack {
-        let new_item =
+    // In order to prevent stored stack references from being invalidated by the graph rewrites, we temporarily store the stack as connections to a single terminal node. This way, the invalidation of stack references is handled by the graph rewrite logic itself.
+    let stack_node = CompNode {
+        op: Op::Impl(Impl::Noop, usize::MAX),
+        info: NodeInfo::no_vals(),
+        types: SmallVec::new(),
+    };
+    let stack_node_idx = pre_compile_graph.graph.add_node(stack_node);
+
+    for (stack_i, &(idx, out_i)) in data_graph.stack.iter().enumerate() {
+        let (idx, out_i) =
             prepare_node(idx, &mut pre_compile_graph, &mut annotated_graph, info_map)[out_i];
-        pre_compile_graph.stack.push(new_item);
+        pre_compile_graph
+            .graph
+            .add_edge(stack_node_idx, idx, (out_i, stack_i));
     }
 
-    // Optimizations
+    // - Graph rewrites -
+    standardize_cmp(&mut pre_compile_graph, func_infos, uiua);
     reduce_sum_and_product(&mut pre_compile_graph, func_infos, uiua);
+    // ---
+
+    pre_compile_graph.stack.extend(std::iter::repeat_n(
+        Default::default(),
+        data_graph.stack.len(),
+    ));
+    for edge in pre_compile_graph.graph.edges(stack_node_idx) {
+        let (out_i, in_i) = *edge.weight();
+        let item = (edge.target(), out_i);
+        pre_compile_graph.stack[in_i] = item;
+    }
+
+    pre_compile_graph.graph.remove_node(stack_node_idx);
 
     pre_compile_graph
 }
@@ -318,7 +344,12 @@ fn prepare_node<'u, 'ag>(
         | data @ Data::Node(Node::Prim(Sqrt, span))
         | data @ Data::Node(Node::Prim(Exp, span))
         | data @ Data::Node(Node::Prim(Sin, span)) => match_arith_types(false, data, *span, ctx),
-        data @ Data::Node(Node::Prim(Eq, span)) => match_arith_types(true, data, *span, ctx),
+        data @ Data::Node(Node::Prim(Eq, span))
+        | data @ Data::Node(Node::Prim(Ne, span))
+        | data @ Data::Node(Node::Prim(Lt, span))
+        | data @ Data::Node(Node::Prim(Le, span))
+        | data @ Data::Node(Node::Prim(Gt, span))
+        | data @ Data::Node(Node::Prim(Ge, span)) => match_arith_types(true, data, *span, ctx),
         data => add_node(data, ctx),
     }
 }
@@ -425,17 +456,70 @@ fn standardize_cmp<'u>(
     func_infos: &FuncInfos<'u>,
     uiua: &uiua::Uiua,
 ) {
+    let mut to_delete = Vec::new();
+
     for idx in pre_compile_graph.graph.node_indices().collect_vec() {
         let comp_node = pre_compile_graph.graph.node_weight(idx).unwrap();
 
         match &comp_node.op {
-            Op::Data(Data::Node(Node::Prim(Primitive::Ne, _span))) => {
-                //
+            Op::Data(Data::Node(Node::Prim(Primitive::Ne, span))) => {
+                let dependents: Vec<(NodeIndex, (usize, usize))> = pre_compile_graph
+                    .graph
+                    .edges_directed(idx, Direction::Incoming)
+                    .map(|edge| (edge.source(), *edge.weight()))
+                    .collect_vec();
+
+                let deps: Vec<(NodeIndex, (usize, usize))> = pre_compile_graph
+                    .graph
+                    .edges_directed(idx, Direction::Outgoing)
+                    .map(|edge| (edge.target(), *edge.weight()))
+                    .collect_vec();
+
+                let mut eq_out_info = comp_node.info.vals[0].clone();
+                if let ShapeInfo::Known(val) = &mut eq_out_info.shape {
+                    *val = val.clone().not(uiua).unwrap();
+                }
+
+                let eq_comp_node = CompNode {
+                    op: Op::Prim(Primitive::Eq, *span),
+                    info: NodeInfo::one_val(eq_out_info),
+                    types: comp_node.types.clone(),
+                };
+                let not_comp_node = CompNode {
+                    op: Op::Prim(Primitive::Not, *span),
+                    info: comp_node.info.clone(),
+                    types: comp_node.types.clone(),
+                };
+
+                let eq_node_idx = pre_compile_graph.graph.add_node(eq_comp_node);
+                let not_node_idx = pre_compile_graph.graph.add_node(not_comp_node);
+
+                pre_compile_graph
+                    .graph
+                    .add_edge(not_node_idx, eq_node_idx, (0, 0));
+
+                for (dep_idx, (out_i, in_i)) in deps {
+                    pre_compile_graph
+                        .graph
+                        .add_edge(eq_node_idx, dep_idx, (out_i, in_i));
+                }
+
+                for (dependent_idx, (_out_i, in_i)) in dependents {
+                    pre_compile_graph
+                        .graph
+                        .add_edge(dependent_idx, not_node_idx, (0, in_i));
+                }
+
+                to_delete.push(idx);
             }
             Op::Data(Data::Node(Node::Prim(Primitive::Lt, _span))) => {}
             Op::Data(Data::Node(Node::Prim(Primitive::Le, _span))) => {}
             _ => {}
         }
+    }
+
+    for idx in to_delete {
+        pre_compile_graph.graph.remove_node(idx);
     }
 }
 

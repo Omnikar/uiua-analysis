@@ -617,9 +617,9 @@ fn compile_node<'c, 'a, 'u>(
         }
 
         // -- Monadic Pervasive Functions --
-        Op::Data(Data::Node(Node::Prim(Not, span))) => {
+        Op::Data(Data::Node(&Node::Prim(Not, span))) | Op::Prim(Not, span) => {
             vec![impls::sub_const(
-                1, &comp_node, &deps, *span, block, fctx, ctx,
+                1, &comp_node, &deps, span, block, fctx, ctx,
             )?]
         }
         Op::Data(Data::Node(Node::Prim(Sign, span))) => todo!(),
@@ -668,12 +668,12 @@ fn compile_node<'c, 'a, 'u>(
         Op::Data(Data::Node(Node::Prim(Round, span))) => todo!(),
 
         // -- Dyadic Pervasive Functions --
-        Op::Data(Data::Node(Node::Prim(Eq, span))) => {
+        Op::Data(Data::Node(&Node::Prim(Eq, span))) | Op::Prim(Eq, span) => {
             vec![impls::arith(
                 "tosa.equal",
                 &comp_node,
                 &deps,
-                *span,
+                span,
                 block,
                 fctx,
                 ctx,
