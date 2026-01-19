@@ -62,7 +62,7 @@ pub struct FuncInfos<'u> {
     pub subfuncs: Vec<(DataGraph<'u>, InfoMap)>,
     pub args: SmallVec<[ValInfo; 2]>,
     pub outs: SmallVec<[ValInfo; 1]>,
-    pub purity: Purity,
+    pub _purity: Purity,
 }
 
 #[derive(Debug, Clone)]
@@ -176,12 +176,12 @@ fn try_match_func(
             }
             (
                 ShapeInfo::Unranked {
-                    prefix: lprefix,
-                    suffix: lsuffix,
+                    prefix: _lprefix,
+                    suffix: _lsuffix,
                 },
                 ShapeInfo::Unranked {
-                    prefix: rprefix,
-                    suffix: rsuffix,
+                    prefix: _rprefix,
+                    suffix: _rsuffix,
                 },
             ) => todo!(),
             _ => return None,
@@ -304,6 +304,7 @@ impl ShapeInfo {
 
     /// Returns `Some(shape)` if the rank is known
     /// - `shape` includes `Some(length)` for every known axis length and `None` for every unknown axis length
+    ///
     /// Returns `None` if the rank is unknown
     pub fn known_shape(&self) -> Option<Vec<Option<usize>>> {
         match self {
@@ -535,7 +536,7 @@ pub fn analyze_func_graph<'u>(
         subfuncs: funcs,
         args: arg_infos.into(),
         outs,
-        purity,
+        _purity: purity,
     })
 }
 

@@ -622,7 +622,7 @@ fn compile_node<'c, 'a, 'u>(
                 1, &comp_node, &deps, span, block, fctx, ctx,
             )?]
         }
-        Op::Data(Data::Node(Node::Prim(Sign, span))) => todo!(),
+        Op::Data(Data::Node(Node::Prim(Sign, _span))) => todo!(),
         Op::Data(Data::Node(Node::Prim(Neg, span))) => {
             vec![impls::sub_const(
                 0, &comp_node, &deps, *span, block, fctx, ctx,
@@ -663,9 +663,9 @@ fn compile_node<'c, 'a, 'u>(
                 "math.sin", &comp_node, &deps, *span, block, fctx, ctx,
             )?]
         }
-        Op::Data(Data::Node(Node::Prim(Floor, span))) => todo!(),
-        Op::Data(Data::Node(Node::Prim(Ceil, span))) => todo!(),
-        Op::Data(Data::Node(Node::Prim(Round, span))) => todo!(),
+        Op::Data(Data::Node(Node::Prim(Floor, _span))) => todo!(),
+        Op::Data(Data::Node(Node::Prim(Ceil, _span))) => todo!(),
+        Op::Data(Data::Node(Node::Prim(Round, _span))) => todo!(),
 
         // -- Dyadic Pervasive Functions --
         Op::Data(Data::Node(&Node::Prim(Eq, span))) | Op::Prim(Eq, span) => {
@@ -971,7 +971,7 @@ fn mk_type<'c>(info: &ValInfo, ctx: CompileContext<'c, '_>) -> Type<'c> {
 
 // -- separate file? --
 
-fn print<'c, 'a, 'u>(
+fn _print<'c, 'a, 'u>(
     deps: StackSlice,
     span: usize,
     block: &'a Block<'c>,
@@ -1161,7 +1161,6 @@ fn show<'c, 'a, 'u>(
                 "f32"
             }
         }
-        // TODO: Idk
         CompType::Bool => "bool",
         CompType::Char => "i32",
     };

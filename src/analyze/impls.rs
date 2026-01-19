@@ -257,12 +257,12 @@ fn dyadic_pervasive(
         }
         (
             Unranked {
-                prefix: lprefix,
-                suffix: lsuffix,
+                prefix: _lprefix,
+                suffix: _lsuffix,
             },
             Unranked {
-                prefix: rprefix,
-                suffix: rsuffix,
+                prefix: _rprefix,
+                suffix: _rsuffix,
             },
         ) => {
             todo!()
@@ -567,7 +567,7 @@ pub fn first(ctx: AnalyzeCtx) -> Result<NodeInfo> {
                 Ranked(shape)
             }
         }
-        Unranked { prefix, suffix } => todo!(),
+        Unranked { .. } => todo!(),
     };
 
     Ok(NodeInfo::one_val(ValInfo::new(
@@ -599,7 +599,7 @@ pub fn last(ctx: AnalyzeCtx) -> Result<NodeInfo> {
                 Ranked(shape)
             }
         }
-        Unranked { prefix, suffix } => todo!(),
+        Unranked { .. } => todo!(),
     };
 
     Ok(NodeInfo::one_val(ValInfo::new(
@@ -642,7 +642,7 @@ pub fn deshape_sub(sub: i32, ctx: AnalyzeCtx) -> Result<NodeInfo> {
     let sub_pos = sub.unsigned_abs() as usize;
     let shape = match dep_info.shape {
         // TODO: Needs public method
-        Known(mut value) => todo!(),
+        Known(mut _value) => todo!(),
         Ranked(mut shape) => {
             let rank = shape.len();
             let mut reduce_rank = |n| {
@@ -792,7 +792,7 @@ pub fn transpose_n(n: i32, ctx: AnalyzeCtx) -> Result<NodeInfo> {
             }
             Ranked(shape)
         }
-        Unranked { prefix, suffix } => todo!(),
+        Unranked { .. } => todo!(),
     };
 
     Ok(NodeInfo::one_val(ValInfo::new(
@@ -943,45 +943,45 @@ pub fn r#box(ctx: AnalyzeCtx) -> Result<NodeInfo> {
 
 // -- Dyadic Array Functions --
 
-pub fn reshape(ctx: AnalyzeCtx) -> Result<NodeInfo> {
-    todo!()
-}
+// pub fn reshape(ctx: AnalyzeCtx) -> Result<NodeInfo> {
+//     todo!()
+// }
 
-pub fn select(ctx: AnalyzeCtx) -> Result<NodeInfo> {
-    todo!()
-}
+// pub fn select(ctx: AnalyzeCtx) -> Result<NodeInfo> {
+//     todo!()
+// }
 
-pub fn keep(ctx: AnalyzeCtx) -> Result<NodeInfo> {
-    todo!()
-}
+// pub fn keep(ctx: AnalyzeCtx) -> Result<NodeInfo> {
+//     todo!()
+// }
 
-pub fn multi_keep(n: usize, ctx: AnalyzeCtx) -> Result<NodeInfo> {
-    todo!()
-}
+// pub fn multi_keep(n: usize, ctx: AnalyzeCtx) -> Result<NodeInfo> {
+//     todo!()
+// }
 
-pub fn un_keep(ctx: AnalyzeCtx) -> Result<NodeInfo> {
-    todo!()
-}
+// pub fn un_keep(ctx: AnalyzeCtx) -> Result<NodeInfo> {
+//     todo!()
+// }
 
-pub fn take(ctx: AnalyzeCtx) -> Result<NodeInfo> {
-    todo!()
-}
+// pub fn take(ctx: AnalyzeCtx) -> Result<NodeInfo> {
+//     todo!()
+// }
 
-pub fn drop(ctx: AnalyzeCtx) -> Result<NodeInfo> {
-    todo!()
-}
+// pub fn drop(ctx: AnalyzeCtx) -> Result<NodeInfo> {
+//     todo!()
+// }
 
-pub fn couple(ctx: AnalyzeCtx) -> Result<NodeInfo> {
-    todo!()
-}
+// pub fn couple(ctx: AnalyzeCtx) -> Result<NodeInfo> {
+//     todo!()
+// }
 
-pub fn un_couple(ctx: AnalyzeCtx) -> Result<NodeInfo> {
-    todo!()
-}
+// pub fn un_couple(ctx: AnalyzeCtx) -> Result<NodeInfo> {
+//     todo!()
+// }
 
-pub fn member_of(ctx: AnalyzeCtx) -> Result<NodeInfo> {
-    todo!()
-}
+// pub fn member_of(ctx: AnalyzeCtx) -> Result<NodeInfo> {
+//     todo!()
+// }
 
 // -- Misc Functions --
 
@@ -993,9 +993,9 @@ pub fn rand(_ctx: AnalyzeCtx) -> Result<NodeInfo> {
     )))
 }
 
-pub fn r#gen(ctx: AnalyzeCtx) -> Result<NodeInfo> {
-    todo!()
-}
+// pub fn r#gen(ctx: AnalyzeCtx) -> Result<NodeInfo> {
+//     todo!()
+// }
 
 // -- Mapping Modifiers --
 

@@ -68,7 +68,7 @@ fn analyze_test(uiua: &uiua::Uiua) -> Result<()> {
 // Everything below this line is old code that has been superseded and will be removed eventually.
 // ----------
 
-fn test() {
+fn _test() {
     let file = std::env::args().nth(1).unwrap();
     let text = std::fs::read_to_string(file).unwrap();
     let asm = uiua::Assembly::from_uasm(&text).unwrap();

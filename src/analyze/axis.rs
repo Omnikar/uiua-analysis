@@ -108,7 +108,7 @@ impl Axis {
     pub fn complexity(&self) -> usize {
         match self {
             Axis::Const(_) => 0,
-            Axis::Var(map) => {
+            Axis::Var(_map) => {
                 // TODO: Figure out a heuristic for non-constant terms
                 1
             }

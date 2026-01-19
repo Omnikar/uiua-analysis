@@ -113,9 +113,9 @@ pub fn do_loop<'c, 'a, 'u>(
     let (body_graph, body_info_map) = &fctx.func_infos.subfuncs[body_idx];
 
     let cond_in = cond_graph.arg_count();
-    let cond_out = cond_graph.stack.len();
+    let _cond_out = cond_graph.stack.len();
     let body_in = body_graph.arg_count();
-    let body_out = body_graph.stack.len();
+    let _body_out = body_graph.stack.len();
 
     let cond_block_sig = dep_comp_types
         .iter()

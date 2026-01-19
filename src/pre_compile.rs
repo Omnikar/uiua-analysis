@@ -172,7 +172,7 @@ impl std::fmt::Debug for CompType {
 }
 
 impl<'u> Op<'u> {
-    pub fn span(&self) -> Option<usize> {
+    pub fn _span(&self) -> Option<usize> {
         match self {
             Op::Data(Data::Node(node)) => node.span(),
             Op::Impl(_, span) => Some(*span),
@@ -458,7 +458,7 @@ fn int_type_idx(extent: u64, signed: bool) -> u8 {
 
 fn standardize_cmp<'u>(
     pre_compile_graph: &mut PreCompileGraph<'u>,
-    func_infos: &FuncInfos<'u>,
+    _func_infos: &FuncInfos<'u>,
     uiua: &uiua::Uiua,
 ) {
     let mut nodes_to_delete = Vec::<NodeIndex>::new();
