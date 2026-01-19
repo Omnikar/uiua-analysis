@@ -181,7 +181,10 @@ fn compile_func<'c>(
 
     // If this is the main function, then any leftover outputs get automatically connected to new pretty-print nodes in order to print them when the program ends
     if func_name == "main" {
-        for (idx, out_i) in std::mem::replace(&mut pre_compile_graph.stack, Stack::new()) {
+        for (idx, out_i) in std::mem::replace(&mut pre_compile_graph.stack, Stack::new())
+            .into_iter()
+            .rev()
+        {
             let comp_node = CompNode {
                 op: Op::Impl(Impl::EndShow, usize::MAX),
                 info: crate::analyze::NodeInfo::no_vals(),

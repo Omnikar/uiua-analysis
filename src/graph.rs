@@ -117,6 +117,13 @@ impl<'u> DataGraph<'u> {
                 self.process_node(&func.node)?;
                 self.stack.push(preserved);
             }
+            Node::Mod(By, funcs, _span) => {
+                let func = one_func(By, funcs)?;
+                let preserved = self.stack_n(func.sig.args())?;
+                self.stack
+                    .insert(self.stack.len() - func.sig.args(), preserved);
+                self.process_node(&func.node)?;
+            }
             Node::Mod(Off, funcs, _span) => {
                 let func = one_func(Off, funcs)?;
                 let preserved = self.stack_top()?;
