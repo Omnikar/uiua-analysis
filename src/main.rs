@@ -14,8 +14,16 @@ use std::io::Write;
 
 fn main() -> Result<()> {
     let file = std::env::args().nth(1).unwrap();
-    let text = std::fs::read_to_string(file).unwrap();
-    let asm = uiua::Assembly::from_uasm(&text).unwrap();
+
+    let asm = if file.ends_with(".ua") {
+        uiua::Compiler::with_backend(uiua::NativeSys)
+            .load_file(file)?
+            .finish()
+    } else {
+        let text = std::fs::read_to_string(file).unwrap();
+        uiua::Assembly::from_uasm(&text).unwrap()
+    };
+
     let mut uiua = uiua::Uiua::with_native_sys();
     uiua.asm = asm;
 
