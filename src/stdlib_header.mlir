@@ -1,4 +1,5 @@
 module {
+  func.func private @print_show_bool(memref<*xi1>) -> ()
   func.func private @print_show_u8(memref<*xi8>) -> ()
   func.func private @print_show_i8(memref<*xi8>) -> ()
   func.func private @print_show_u16(memref<*xi16>) -> ()

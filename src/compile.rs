@@ -550,7 +550,6 @@ fn new_compile_graph<'c, 'a, 'u>(
     pre_compile_graph: StableGraph<CompNode<'u>, (usize, usize)>,
     arg_vals: &[Value<'c, 'a>],
 ) -> FuncCompileGraph<'c, 'a, 'u> {
-    // pre_compile_graph.map_owned(|_, node| (node, None), |_, x| x)
     pre_compile_graph.map_owned(
         |_, node| {
             let val = match &node.op {
@@ -666,6 +665,17 @@ fn compile_node<'c, 'a, 'u>(
         Op::Data(Data::Node(Node::Prim(Round, span))) => todo!(),
 
         // -- Dyadic Pervasive Functions --
+        Op::Data(Data::Node(Node::Prim(Eq, span))) => {
+            vec![impls::arith(
+                "tosa.equal",
+                &comp_node,
+                &deps,
+                *span,
+                block,
+                fctx,
+                ctx,
+            )?]
+        }
         Op::Data(Data::Node(Node::Prim(Add, span))) => {
             vec![impls::arith(
                 "tosa.add", &comp_node, &deps, *span, block, fctx, ctx,
@@ -1127,7 +1137,7 @@ fn show<'c, 'a, 'u>(
             }
         }
         // TODO: Idk
-        CompType::Bool => "i1",
+        CompType::Bool => "bool",
         CompType::Char => "i32",
     };
     let print_func = format!("print_show_{print_func_suffix}");

@@ -70,3 +70,11 @@ macro_rules! create_ffi_print_funcs {
 }
 
 create_ffi_print_funcs!(u8, i8, u16, i16, u32, i32, u64, i64, f32, f64);
+
+/// # Safety
+/// The given struct must be a valid MLIR unranked memref
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn print_show_bool(memref: FfiUnrankedMemRef) {
+    let array_ref = unsafe { extract_memref::<u8>(memref) };
+    show_num(array_ref);
+}
