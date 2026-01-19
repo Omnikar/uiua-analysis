@@ -679,6 +679,28 @@ fn compile_node<'c, 'a, 'u>(
                 ctx,
             )?]
         }
+        Op::Data(Data::Node(&Node::Prim(Gt, span))) | Op::Prim(Gt, span) => {
+            vec![impls::arith(
+                "tosa.greater",
+                &comp_node,
+                &deps,
+                span,
+                block,
+                fctx,
+                ctx,
+            )?]
+        }
+        Op::Data(Data::Node(&Node::Prim(Ge, span))) | Op::Prim(Ge, span) => {
+            vec![impls::arith(
+                "tosa.greater_equal",
+                &comp_node,
+                &deps,
+                span,
+                block,
+                fctx,
+                ctx,
+            )?]
+        }
         Op::Data(Data::Node(Node::Prim(Add, span))) => {
             vec![impls::arith(
                 "tosa.add", &comp_node, &deps, *span, block, fctx, ctx,

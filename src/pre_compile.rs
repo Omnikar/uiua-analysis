@@ -1,13 +1,18 @@
 use itertools::Itertools;
 // use anyhow::{bail, Context as _, Result};
 // use itertools::Itertools;
-use petgraph::{Direction, graph::NodeIndex, stable_graph::StableGraph, visit::EdgeRef};
+use petgraph::{
+    Direction,
+    graph::{EdgeIndex, NodeIndex},
+    stable_graph::StableGraph,
+    visit::EdgeRef,
+};
 use smallvec::{SmallVec, smallvec};
 use std::collections::HashMap;
 use uiua::{Node, Primitive};
 
 use crate::{
-    analyze::{FuncInfos, FuncLib, InfoMap, NodeInfo, RangeInfo, ShapeInfo, ValInfo, axis::Axis},
+    analyze::{FuncInfos, NodeInfo, RangeInfo, ShapeInfo, ValInfo},
     graph::{Data, DataGraph, Stack},
 };
 
@@ -456,13 +461,18 @@ fn standardize_cmp<'u>(
     func_infos: &FuncInfos<'u>,
     uiua: &uiua::Uiua,
 ) {
-    let mut to_delete = Vec::new();
+    let mut nodes_to_delete = Vec::<NodeIndex>::new();
+    let mut edges_to_delete = Vec::<EdgeIndex>::new();
 
     for idx in pre_compile_graph.graph.node_indices().collect_vec() {
-        let comp_node = pre_compile_graph.graph.node_weight(idx).unwrap();
+        let comp_node = pre_compile_graph.graph.node_weight_mut(idx).unwrap();
 
         match &comp_node.op {
             Op::Data(Data::Node(Node::Prim(Primitive::Ne, span))) => {
+                let mut eq_out_info = comp_node.info.vals[0].clone();
+                let comp_node_info = comp_node.info.clone();
+                let types = comp_node.types.clone();
+
                 let dependents: Vec<(NodeIndex, (usize, usize))> = pre_compile_graph
                     .graph
                     .edges_directed(idx, Direction::Incoming)
@@ -475,7 +485,6 @@ fn standardize_cmp<'u>(
                     .map(|edge| (edge.target(), *edge.weight()))
                     .collect_vec();
 
-                let mut eq_out_info = comp_node.info.vals[0].clone();
                 if let ShapeInfo::Known(val) = &mut eq_out_info.shape {
                     *val = val.clone().not(uiua).unwrap();
                 }
@@ -483,12 +492,12 @@ fn standardize_cmp<'u>(
                 let eq_comp_node = CompNode {
                     op: Op::Prim(Primitive::Eq, *span),
                     info: NodeInfo::one_val(eq_out_info),
-                    types: comp_node.types.clone(),
+                    types: types.clone(),
                 };
                 let not_comp_node = CompNode {
                     op: Op::Prim(Primitive::Not, *span),
-                    info: comp_node.info.clone(),
-                    types: comp_node.types.clone(),
+                    info: comp_node_info,
+                    types,
                 };
 
                 let eq_node_idx = pre_compile_graph.graph.add_node(eq_comp_node);
@@ -510,16 +519,34 @@ fn standardize_cmp<'u>(
                         .add_edge(dependent_idx, not_node_idx, (0, in_i));
                 }
 
-                to_delete.push(idx);
+                nodes_to_delete.push(idx);
             }
-            Op::Data(Data::Node(Node::Prim(Primitive::Lt, _span))) => {}
-            Op::Data(Data::Node(Node::Prim(Primitive::Le, _span))) => {}
+            Op::Data(Data::Node(Node::Prim(prim @ Primitive::Lt | prim @ Primitive::Le, span))) => {
+                let new_prim = match prim {
+                    Primitive::Lt => Primitive::Gt,
+                    Primitive::Le => Primitive::Ge,
+                    _ => unreachable!(),
+                };
+                comp_node.op = Op::Prim(new_prim, *span);
+                let mut edges_to_add = Vec::new();
+                for edge in pre_compile_graph.graph.edges(idx) {
+                    let (out_i, in_i) = *edge.weight();
+                    edges_to_add.push((edge.target(), out_i, 1 - in_i));
+                    edges_to_delete.push(edge.id());
+                }
+                for (target, out_i, in_i) in edges_to_add {
+                    pre_compile_graph.graph.add_edge(idx, target, (out_i, in_i));
+                }
+            }
             _ => {}
         }
     }
 
-    for idx in to_delete {
+    for idx in nodes_to_delete {
         pre_compile_graph.graph.remove_node(idx);
+    }
+    for edge_idx in edges_to_delete {
+        pre_compile_graph.graph.remove_edge(edge_idx);
     }
 }
 
