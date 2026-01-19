@@ -240,7 +240,12 @@ pub fn rows<'c, 'a, 'u>(
             out_shape.insert(0, out_len.0.map(|x| x as u64).unwrap_or(DYN_AX));
             let out_type: Type = RankedTensorType::new(&out_shape, elem_type, None).into();
 
-            let empty_op = tensor::empty(ctx.context, out_type, &[], loc);
+            let mut dyn_dims = Vec::new();
+            if out_len.0.is_none() {
+                dyn_dims.push(out_len.1);
+            }
+
+            let empty_op = tensor::empty(ctx.context, out_type, &dyn_dims, loc);
             let empty_val = one_op_val(block, empty_op)?;
 
             out_row_types.push(row_type);
