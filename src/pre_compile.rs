@@ -128,6 +128,20 @@ impl CompType {
             CompType::Char => 32,
         }
     }
+
+    fn supertype(&self, rhs: &Self) -> Option<Self> {
+        use CompType::*;
+        Some(match (self, rhs) {
+            (Int(s1, i1), Int(s2, i2)) => Int(*s1 || *s2, (*i1).max(*i2)),
+            (Int(_, _), Float(d)) | (Float(d), Int(_, _)) => Float(*d),
+            (Int(s, i), Bool) | (Bool, Int(s, i)) => Int(*s, *i),
+            (Float(d1), Float(d2)) => Float(*d1 || *d2),
+            (Float(d), Bool) | (Bool, Float(d)) => Float(*d),
+            (Bool, Bool) => Bool,
+            (Char, Char) => Char,
+            _ => return None,
+        })
+    }
 }
 impl std::fmt::Display for CompType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -303,7 +317,8 @@ fn prepare_node<'u, 'ag>(
         | data @ Data::Node(Node::Prim(Reciprocal, span))
         | data @ Data::Node(Node::Prim(Sqrt, span))
         | data @ Data::Node(Node::Prim(Exp, span))
-        | data @ Data::Node(Node::Prim(Sin, span)) => match_arith_types(data, *span, ctx),
+        | data @ Data::Node(Node::Prim(Sin, span)) => match_arith_types(false, data, *span, ctx),
+        data @ Data::Node(Node::Prim(Eq, span)) => match_arith_types(true, data, *span, ctx),
         data => add_node(data, ctx),
     }
 }
@@ -351,16 +366,29 @@ fn add_node<'u, 'ag>(
 }
 
 fn match_arith_types<'u, 'ag>(
+    use_supertype: bool,
     data: Data<'u>,
     span: usize,
     ctx: PreCompileCtx<'u, 'ag, '_, '_, '_, '_, '_>,
 ) -> &'ag [(NodeIndex, usize)] {
-    let out_type = CompType::from_info(&ctx.this_info.vals[0]);
+    let target_type = if use_supertype {
+        // Target supertype of arguments
+        ctx.dep_infos
+            .iter()
+            .map(CompType::from_info)
+            // FIXME: Probably don't use `.expect` here
+            .reduce(|a, b| a.supertype(&b).expect("Cannot identify supertype"))
+            .expect("Cannot identify supertype of zero arguments")
+    } else {
+        // Target output type
+        CompType::from_info(&ctx.this_info.vals[0])
+    };
+
     for ((dep_idx, dep_out_i), dep_info) in ctx.dep_idxs.iter_mut().zip(ctx.dep_infos) {
         let dep_type = CompType::from_info(dep_info);
         // TODO: Handle characters
-        if dep_type != out_type
-            && let Some(cast) = Cast::from_types(&dep_type, &out_type)
+        if dep_type != target_type
+            && let Some(cast) = Cast::from_types(&dep_type, &target_type)
         {
             let cast_op = Op::Impl(Impl::Cast(cast), span);
             let node_info = NodeInfo {
@@ -370,7 +398,7 @@ fn match_arith_types<'u, 'ag>(
             let comp_node = CompNode {
                 op: cast_op,
                 info: node_info,
-                types: smallvec![out_type.clone()],
+                types: smallvec![target_type.clone()],
             };
             let cast_idx = ctx.pre_compile_graph.graph.add_node(comp_node);
             ctx.pre_compile_graph
@@ -391,6 +419,25 @@ fn int_type_idx(extent: u64, signed: bool) -> u8 {
 }
 
 // -- separate file? --
+
+fn standardize_cmp<'u>(
+    pre_compile_graph: &mut PreCompileGraph<'u>,
+    func_infos: &FuncInfos<'u>,
+    uiua: &uiua::Uiua,
+) {
+    for idx in pre_compile_graph.graph.node_indices().collect_vec() {
+        let comp_node = pre_compile_graph.graph.node_weight(idx).unwrap();
+
+        match &comp_node.op {
+            Op::Data(Data::Node(Node::Prim(Primitive::Ne, _span))) => {
+                //
+            }
+            Op::Data(Data::Node(Node::Prim(Primitive::Lt, _span))) => {}
+            Op::Data(Data::Node(Node::Prim(Primitive::Le, _span))) => {}
+            _ => {}
+        }
+    }
+}
 
 fn reduce_sum_and_product<'u>(
     pre_compile_graph: &mut PreCompileGraph<'u>,
