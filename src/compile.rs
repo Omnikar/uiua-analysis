@@ -354,7 +354,7 @@ fn compile_ffi_export_func<'c, 'u>(
 
     let mut outs = vals_from_cg(&pre_compile_graph.stack, &compile_graph)?;
     if outs.len() > 1 {
-        bail!("FFI function cannot have more than one output");
+        bail!("FFI function {func_name} cannot have more than one output");
     }
 
     let mut return_vals = Vec::with_capacity(outs.len());
@@ -811,7 +811,7 @@ fn compile_node<'c, 'a, 'u>(
 
 fn name_mangle(func: &AnalyzedFunc) -> Result<String> {
     let uiua::FunctionId::Named(base_name) = &func.id else {
-        bail!("Attempted to mangle non-named function");
+        bail!("Attempted to mangle non-named function: {:?}", func);
     };
 
     if base_name == "main" {
