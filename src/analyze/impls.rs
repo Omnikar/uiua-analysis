@@ -406,6 +406,52 @@ pub fn div(ctx: AnalyzeCtx) -> Result<NodeInfo> {
     Ok(NodeInfo::one_val(ValInfo::new(typ, shape, range)))
 }
 
+pub fn min(ctx: AnalyzeCtx) -> Result<NodeInfo> {
+    let [lhs, rhs] = two_args(ctx.dep_infos)?;
+    let typ = match (lhs.typ, rhs.typ) {
+        (0, 0) => 0,
+        (1, 1) => 1,
+        (2, _) | (_, 2) => 2,
+        (0, 3) | (3, 0) | (3, 3) => 3,
+        (0, 1) | (1, 0) | (1, 3) | (3, 1) => bail!(
+            "Cannot get the minimum of {} and {}",
+            typ_name(lhs.typ),
+            typ_name(rhs.typ),
+        ),
+        (_, 4..) | (4.., _) => unreachable!(),
+    };
+
+    let shape = dyadic_pervasive(lhs.shape, rhs.shape, Value::min, ctx.reqs, ctx.uiua)?;
+
+    // FIXME
+    let range = lhs.range.max(rhs.range);
+
+    Ok(NodeInfo::one_val(ValInfo::new(typ, shape, range)))
+}
+
+pub fn max(ctx: AnalyzeCtx) -> Result<NodeInfo> {
+    let [lhs, rhs] = two_args(ctx.dep_infos)?;
+    let typ = match (lhs.typ, rhs.typ) {
+        (0, 0) => 0,
+        (1, 1) => 1,
+        (2, _) | (_, 2) => 2,
+        (0, 3) | (3, 0) | (3, 3) => 3,
+        (0, 1) | (1, 0) | (1, 3) | (3, 1) => bail!(
+            "Cannot get the maximum of {} and {}",
+            typ_name(lhs.typ),
+            typ_name(rhs.typ),
+        ),
+        (_, 4..) | (4.., _) => unreachable!(),
+    };
+
+    let shape = dyadic_pervasive(lhs.shape, rhs.shape, Value::max, ctx.reqs, ctx.uiua)?;
+
+    // FIXME
+    let range = lhs.range.max(rhs.range);
+
+    Ok(NodeInfo::one_val(ValInfo::new(typ, shape, range)))
+}
+
 // -- Monadic Array Functions --
 
 pub fn len(ctx: AnalyzeCtx) -> Result<NodeInfo> {

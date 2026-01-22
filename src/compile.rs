@@ -728,6 +728,29 @@ fn compile_node<'c, 'a, 'u>(
                 ctx,
             )?]
         }
+        // TODO: Handle NaNs like how normal Uiua does
+        Op::Data(Data::Node(Node::Prim(Min, span))) => {
+            vec![impls::arith(
+                "tosa.minimum",
+                &comp_node,
+                &deps,
+                *span,
+                block,
+                fctx,
+                ctx,
+            )?]
+        }
+        Op::Data(Data::Node(Node::Prim(Max, span))) => {
+            vec![impls::arith(
+                "tosa.maximum",
+                &comp_node,
+                &deps,
+                *span,
+                block,
+                fctx,
+                ctx,
+            )?]
+        }
 
         // -- Monadic Array Functions --
         Op::Data(Data::Node(Node::Prim(Len, span))) => {

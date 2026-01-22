@@ -797,6 +797,8 @@ fn analyze_node_impl<'u>(
         Data::Node(Node::Prim(Sub, _span)) => impls::sub(ctx)?,
         Data::Node(Node::Prim(Mul, _span)) => impls::mul(ctx)?,
         Data::Node(Node::Prim(Div, _span)) => impls::div(ctx)?,
+        Data::Node(Node::Prim(Min, _span)) => impls::min(ctx)?,
+        Data::Node(Node::Prim(Max, _span)) => impls::max(ctx)?,
 
         // -- Monadic Array Functions --
         Data::Node(Node::Prim(Len, _span)) => impls::len(ctx)?,
