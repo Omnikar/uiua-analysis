@@ -101,7 +101,11 @@ pub fn rows<'c, 'a, 'u>(
                     let len_val = const_int(len as i64, ctx.index_type, block, ctx, loc)?;
                     (Some(len), len_val)
                 }
-                Some(None) => continue, // Scalars automatically pass
+                Some(None) => {
+                    // Scalars automatically pass
+                    deps_fixed[dep_i] = true;
+                    continue;
+                }
                 None => {
                     let dim_op =
                         tensor::dim(ctx.context, ctx.index_type, dep_vals[dep_i], zero_val, loc);
