@@ -19,7 +19,7 @@ pub fn sum_product<'c, 'a, 'u>(
     match dep_info.shape.rank() {
         Some(1..) => {}
         Some(0) => return Ok(dep_val),
-        None => todo!("Reverse unranked tensor"),
+        None => todo!("Reduce unranked tensor"),
     }
 
     let reduce_op: Operation = if product {
@@ -117,18 +117,61 @@ pub fn do_loop<'c, 'a, 'u>(
     let body_in = body_graph.arg_count();
     let _body_out = body_graph.stack.len();
 
+    // let cond_block_sig = dep_comp_types
+    //     .iter()
+    //     .zip(&dep_infos)
+    //     .map(|(comp_type, info)| mk_type_from_comp_shape(comp_type, &info.shape, ctx))
+    //     .map(|typ| (typ, loc))
+    //     .collect_vec();
+
     let cond_block_sig = dep_comp_types
         .iter()
         .zip(&dep_infos)
-        .map(|(comp_type, info)| mk_type_from_comp_shape(comp_type, &info.shape, ctx))
-        .map(|typ| (typ, loc))
-        .collect_vec();
+        .zip(
+            body_graph
+                .stack
+                .iter()
+                .map(|&(idx, out_i)| &body_info_map.get(&idx).unwrap().vals[out_i]),
+        )
+        .map(|((comp_type, info), body_out_info)| {
+            let dims1 = info
+                .shape
+                .known_shape()
+                .context("Loop on unranked tensor")?
+                .into_iter()
+                .map(|x| x.map(|x| x as u64).unwrap_or(DYN_AX));
+            let dims2 = body_out_info
+                .shape
+                .known_shape()
+                .context("Loop on unranked tensor")?
+                .into_iter()
+                .map(|x| x.map(|x| x as u64).unwrap_or(DYN_AX));
+            let dims = dims1.zip(dims2).map(|(d1, d2)| d1.max(d2)).collect_vec();
+            let elem_type = mk_elem_type(comp_type, ctx);
+            Ok(Type::from(RankedTensorType::new(&dims, elem_type, None)))
+        })
+        .map(|typ| typ.map(|typ| (typ, loc)))
+        .collect::<Result<Vec<_>>>()?;
+
+    let dep_vals = dep_vals
+        .into_iter()
+        .zip(cond_block_sig.iter())
+        .map(|(val, &(typ, _))| {
+            if val.r#type() != typ {
+                let cast_op = tensor::cast(ctx.context, typ, val, loc);
+                Ok(one_op_val(block, cast_op)?)
+            } else {
+                Ok(val)
+            }
+        })
+        .collect::<Result<Vec<_>>>()?;
 
     let cond_block = Block::new(&cond_block_sig);
 
     let cond_arg_vals: Vec<Value> = (0..dep_vals.len())
         .map(|i| cond_block.argument(i).map(Into::into).map_err(Into::into))
         .collect::<Result<_>>()?;
+
     let cond_pre_compile_graph =
         prepare_graph(cond_graph, cond_info_map, fctx.func_infos, ctx.uiua);
     let node_idxs = cond_pre_compile_graph.graph.node_indices().collect_vec();

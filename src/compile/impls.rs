@@ -214,7 +214,8 @@ fn enforce_min_rank<'c, 'a>(
     let out_type = RankedTensorType::new(&shape, elem_type, None).into();
 
     let shape_type = RankedTensorType::new(&[rank as u64], ctx.index_type, None).into();
-    let shape_val = one_op_val(block, tensor::empty(ctx.context, shape_type, &[], loc))?;
+    // let shape_val = one_op_val(block, tensor::empty(ctx.context, shape_type, &[], loc))?;
+    let mut dim_vals = Vec::new();
     for (dim_i, &dim) in shape.iter().enumerate() {
         let dim_i_val = const_int(dim_i as i64, ctx.index_type, block, ctx, loc)?;
         let dim_val: Value = if dim == DYN_AX {
@@ -223,16 +224,21 @@ fn enforce_min_rank<'c, 'a>(
         } else {
             const_int(dim as i64, ctx.index_type, block, ctx, loc)?
         };
-        let insert_op = tensor::insert(
-            ctx.context,
-            shape_type,
-            dim_val,
-            shape_val,
-            &[dim_i_val],
-            loc,
-        );
-        block.append_operation(insert_op.into());
+        // let insert_op = tensor::insert(
+        //     ctx.context,
+        //     shape_type,
+        //     dim_val,
+        //     shape_val,
+        //     &[dim_i_val],
+        //     loc,
+        // );
+        // block.append_operation(insert_op.into());
+        dim_vals.push(dim_val);
     }
+    let shape_val = one_op_val(
+        block,
+        tensor::from_elements(ctx.context, shape_type, &dim_vals, loc),
+    )?;
 
     let reshape_op = tensor::reshape(ctx.context, out_type, *val, shape_val, loc);
 
