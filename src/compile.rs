@@ -354,7 +354,10 @@ fn compile_ffi_export_func<'c, 'u>(
 
     let mut outs = vals_from_cg(&pre_compile_graph.stack, &compile_graph)?;
     if outs.len() > 1 {
-        bail!("FFI function {func_name} cannot have more than one output");
+        bail!(
+            "{}: FFI function {func_name} cannot have more than one output",
+            loc
+        );
     }
 
     let mut return_vals = Vec::with_capacity(outs.len());
