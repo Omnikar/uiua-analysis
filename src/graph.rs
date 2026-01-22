@@ -117,11 +117,27 @@ impl<'u> DataGraph<'u> {
                 self.process_node(&func.node)?;
                 self.stack.push(preserved);
             }
+            Node::ImplMod(OnSub(n), funcs, _span) => {
+                let func = one_func(On, funcs)?;
+                let preserved = args(&self.stack, *n).to_vec();
+                self.process_node(&func.node)?;
+                self.stack.extend_from_slice(&preserved);
+            }
             Node::Mod(By, funcs, _span) => {
                 let func = one_func(By, funcs)?;
                 let preserved = self.stack_n(func.sig.args())?;
                 self.stack
                     .insert(self.stack.len() - func.sig.args(), preserved);
+                self.process_node(&func.node)?;
+            }
+            Node::ImplMod(BySub(n), funcs, _span) => {
+                let func = one_func(By, funcs)?;
+                let preserved = (func.sig.args() - n + 1..=func.sig.args())
+                    .rev()
+                    .map(|i| self.stack_n(i))
+                    .collect::<Result<Vec<_>>>()?;
+                self.stack
+                    .insert_many(self.stack.len() - func.sig.args(), preserved);
                 self.process_node(&func.node)?;
             }
             Node::Mod(Off, funcs, _span) => {
