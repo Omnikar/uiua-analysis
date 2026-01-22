@@ -719,6 +719,12 @@ fn analyze_node_impl<'u>(
                             info.clone()
                         }
                     })
+                    .map(|info| {
+                        let mut new_info =
+                            crate::pre_compile::CompType::from_info(&info).to_scalar_info();
+                        new_info.shape = info.shape;
+                        new_info
+                    })
                     .collect_vec();
                 let mut func_infos =
                     analyze_func_graph(&data_graph, &generic_arg_infos, ctx.funclib, ctx.uiua)?;
